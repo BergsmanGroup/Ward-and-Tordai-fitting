@@ -35,6 +35,7 @@ def test_fit_recovers_known_D_from_synthetic_data():
     assert fit_result.success, fit_result.message
     assert fit_result.fitted_D_m2_per_s == pytest.approx(true_D, rel=0.02)
     assert fit_result.rmse_N_per_m < 1e-6  # noise-free synthetic data
+    assert fit_result.r_squared == pytest.approx(1.0, abs=1e-6)  # near-perfect fit
 
 
 def test_fit_recovers_known_D_with_added_noise():
@@ -53,6 +54,7 @@ def test_fit_recovers_known_D_with_added_noise():
 
     assert fit_result.success, fit_result.message
     assert fit_result.fitted_D_m2_per_s == pytest.approx(true_D, rel=0.15)
+    assert fit_result.r_squared > 0.95  # still a good fit despite noise
 
 
 def test_simulate_uses_entered_D_without_fitting():

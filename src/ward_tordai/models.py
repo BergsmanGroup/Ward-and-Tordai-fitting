@@ -81,7 +81,12 @@ class SimulationResult:
 
 @dataclass
 class FitResult:
-    """Output of a D-only optimization."""
+    """Output of a D-only optimization.
+
+    ``r_squared`` is the coefficient of determination
+    (``1 - SS_res/SS_tot``) of the fitted curve against the measured
+    surface tensions, reported alongside RMSE as a fit-quality value.
+    """
 
     fitted_D_m2_per_s: float
     simulation: Optional[SimulationResult]
@@ -89,4 +94,5 @@ class FitResult:
     n_observations: int
     success: bool
     message: str = ""
+    r_squared: float = float("nan")
     log10_D_bounds: tuple = field(default_factory=lambda: (-13.0, -7.0))

@@ -107,9 +107,11 @@ def test_export_fit_summary_csv(tmp_path):
         n_observations=10,
         success=True,
         message="ok",
+        r_squared=0.987,
     )
     out_path = tmp_path / "summary.csv"
     export_fit_summary_csv(out_path, fit_result, settings)
     df = pd.read_csv(out_path)
     assert df.loc[0, "fitted_D_m2_per_s"] == pytest.approx(1.2e-9)
     assert df.loc[0, "isotherm_param_a_mol_per_m3"] == pytest.approx(1e-4)
+    assert df.loc[0, "r_squared"] == pytest.approx(0.987)

@@ -12,6 +12,7 @@ from typing import Optional
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QDoubleValidator, QValidator
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -56,13 +57,64 @@ ISOTHERM_DISPLAY_NAMES = {
 }
 
 
+class ScientificDoubleSpinBox(QDoubleSpinBox):
+    """A QDoubleSpinBox that accepts plain decimal *or* scientific notation.
+
+    The stock ``QDoubleSpinBox`` validator rejects 'e'/'E' entirely and
+    limits the number of typed digits to its ``decimals()`` setting, which
+    makes it impossible to type values like ``7e-11`` or extra trailing
+    zeros of a single significant figure (e.g. ``0.0000000001``). This
+    subclass accepts any text a ``QDoubleValidator`` in scientific-notation
+    mode allows, and parses/formats the value itself so no digit budget is
+    imposed on typing.
+    """
+
+    def __init__(self, minimum: float = -1e30, maximum: float = 1e30, parent=None):
+        super().__init__(parent)
+        self._validator = QDoubleValidator(minimum, maximum, 18, self)
+        self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        # A generous internal 'decimals' so Qt's own rounding never clips
+        # a typed value; actual validation/formatting is overridden below.
+        self.setDecimals(18)
+        self.setRange(minimum, maximum)
+
+    def validate(self, text: str, pos: int):
+        if not hasattr(self, "_validator"):
+            # Called by Qt's own __init__ plumbing before our constructor
+            # body has run; defer to the base implementation just this once.
+            return super().validate(text, pos)
+        if text.strip() in ("", "-", "+", ".", "-.", "e", "E"):
+            return (QValidator.State.Intermediate, text, pos)
+        # Allow a trailing 'e'/'e-'/'e+' while the user is still typing the
+        # exponent, which QDoubleValidator alone treats as Invalid.
+        stripped = text.rstrip()
+        if stripped and stripped[-1] in "eE+-":
+            probe = stripped + "1"
+            state, _, _ = self._validator.validate(probe, len(probe))
+            if state != QValidator.State.Invalid:
+                return (QValidator.State.Intermediate, text, pos)
+        return self._validator.validate(text, pos)
+
+    def valueFromText(self, text: str) -> float:
+        try:
+            return float(text)
+        except ValueError:
+            return self.value()
+
+    def textFromValue(self, value: float) -> str:
+        return f"{value:.6g}"
+
+    def stepBy(self, steps: int) -> None:
+        # Multiplicative stepping is more useful than additive stepping
+        # across many orders of magnitude (diffusivities, concentrations).
+        factor = 1.1 ** steps
+        new_value = self.value() * factor if self.value() != 0 else steps * 1e-12
+        self.setValue(new_value)
+
+
 def _spin(minimum, maximum, decimals, value, step=None, suffix=""):
-    box = QDoubleSpinBox()
-    box.setRange(minimum, maximum)
-    box.setDecimals(decimals)
+    box = ScientificDoubleSpinBox(minimum, maximum)
     box.setValue(value)
-    if step is not None:
-        box.setSingleStep(step)
     if suffix:
         box.setSuffix(" " + suffix)
     return box
@@ -170,7 +222,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.isotherm_combo)
 
         form = QFormLayout()
-        self.a_value = _spin(1e-15, 1e6, 10, 6.62e-7)
+        self.a_value = _spin(1e-15, 1e6, 10, 6.62e-6)
         form.addRow("a (characteristic conc., M):", self.a_value)
 
         self.gamma_inf_value = _spin(1e-6, 1e6, 6, 2.91)
@@ -247,7 +299,18 @@ class MainWindow(QMainWindow):
         self.conc_unit_combo.setCurrentText(ConcentrationUnit.MOLAR.value)
         self.a_value.setValue(preset.a_M)
         self.gamma_inf_value.setValue(preset.gamma_inf_umol_per_m2)
-        if self.isotherm_combo.currentText() != "Langmuir":
+        self.isotherm_combo.setCurrentText(ISOTHERM_DISPLAY_NAMES["langmuir"])
+        if preset.suggested_bulk_conc_M is not None:
+            self.conc_value.setValue(preset.suggested_bulk_conc_M)
+        if preset.suggested_D_m2_per_s is not None:
+            self.d_guess_value.setValue(preset.suggested_D_m2_per_s)
+        if preset.suggested_temperature_C is not None:
+            self.temperature_value.setValue(preset.suggested_temperature_C)
+        if preset.suggested_sigma0_mN_per_m is not None:
+            self.sigma0_value.setValue(preset.suggested_sigma0_mN_per_m)
+        if preset.note:
+            QMessageBox.information(self, "Preset applied", preset.note)
+        else:
             QMessageBox.information(
                 self,
                 "Preset applied",
@@ -363,9 +426,9 @@ class MainWindow(QMainWindow):
         self._last_simulation = result
         self._redraw_plot(result)
         if result.converged:
-            self._set_results_text(self._format_simulation_text(settings, result))
+            self._log(self._format_simulation_text(settings, result))
         else:
-            self._set_results_text(f"Simulation failed to converge: {result.message}")
+            self._log(f"=== Simulate ===\nSimulation failed to converge: {result.message}")
 
     def _on_fit(self) -> None:
         data = self._require_data()
@@ -381,10 +444,16 @@ class MainWindow(QMainWindow):
         self.last_fit = fit_result
         self._last_simulation = fit_result.simulation
         self._redraw_plot(fit_result.simulation)
-        self._set_results_text(self._format_fit_text(settings, fit_result))
+        if fit_result.success:
+            # Reflect the fitted D back into the input field so the user
+            # can see/reuse it, and immediately re-simulate with it so the
+            # displayed "D used" matches the field.
+            self.d_guess_value.setValue(fit_result.fitted_D_m2_per_s)
+        self._log(self._format_fit_text(settings, fit_result))
 
     def _format_simulation_text(self, settings: FitSettings, result) -> str:
         lines = [
+            "=== Simulate ===",
             f"Isotherm: {ISOTHERM_DISPLAY_NAMES[settings.isotherm_name]}  "
             f"params: {settings.isotherm_params}",
             f"D used: {settings.diffusion_coefficient_m2_per_s:.4e} m^2/s",
@@ -399,12 +468,15 @@ class MainWindow(QMainWindow):
 
     def _format_fit_text(self, settings: FitSettings, fit_result) -> str:
         if not fit_result.success:
-            return f"Fit failed: {fit_result.message}"
+            return f"=== Fit D ===\nFit failed: {fit_result.message}"
         lines = [
+            "=== Fit D ===",
             f"Isotherm: {ISOTHERM_DISPLAY_NAMES[settings.isotherm_name]}  "
             f"params: {settings.isotherm_params}",
-            f"Fitted apparent D: {fit_result.fitted_D_m2_per_s:.4e} m^2/s",
-            f"RMSE: {fit_result.rmse_N_per_m*1000:.4f} mN/m",
+            f"Fitted apparent D: {fit_result.fitted_D_m2_per_s:.4e} m^2/s  "
+            f"(D field updated to this value)",
+            f"Fit quality: RMSE = {fit_result.rmse_N_per_m*1000:.4f} mN/m, "
+            f"R^2 = {fit_result.r_squared:.5f}",
             f"n observations: {fit_result.n_observations}",
         ]
         sim = fit_result.simulation
@@ -419,8 +491,14 @@ class MainWindow(QMainWindow):
         )
         return "\n".join(lines)
 
-    def _set_results_text(self, text: str) -> None:
-        self.results_box.setPlainText(text)
+    def _log(self, text: str) -> None:
+        """Append an entry to the results/log panel (never overwrites history)."""
+        if self.results_box.toPlainText():
+            self.results_box.appendPlainText("")
+        self.results_box.appendPlainText(text)
+        self.results_box.verticalScrollBar().setValue(
+            self.results_box.verticalScrollBar().maximum()
+        )
 
     def _redraw_plot(self, simulation=None) -> None:
         if self.data is not None:

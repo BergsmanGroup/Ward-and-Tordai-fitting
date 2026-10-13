@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Type
+from typing import Dict, Optional, Type
 
 import numpy as np
 from scipy.optimize import brentq
@@ -314,15 +314,56 @@ class SurfactantPreset:
     validated Frumkin/Generalized Frumkin parameters (see module docstring
     of ``gui.py`` for how non-Langmuir isotherms use these as reference
     values only).
+
+    Optional ``suggested_*`` fields provide convenience starting values for
+    an associated known dataset (e.g. the "Test" preset below); they are
+    left as ``None`` for the three handout presets, which are not tied to
+    a specific concentration or D.
     """
 
     display_name: str
     gamma_inf_umol_per_m2: float
     a_M: float  # mol/L
+    suggested_bulk_conc_M: Optional[float] = None
+    suggested_D_m2_per_s: Optional[float] = None
+    suggested_temperature_C: Optional[float] = None
+    suggested_sigma0_mN_per_m: Optional[float] = None
+    note: str = ""
 
 
 SURFACTANT_PRESETS: Dict[str, SurfactantPreset] = {
-    "Triton X-100": SurfactantPreset("Triton X-100", 2.91, 6.62e-7),
+    # NOTE on the Triton X-100 "a" value: the lab handout table originally
+    # supplied for this program listed a = 6.62e-7 M. Cross-validating
+    # against the legacy "000_Ward Tordai Fitting Program (KBC).xlsm"
+    # workbook's own saved Console state (Gamma_eq = 2.8827e-10 mol/cm^2,
+    # sigma_eq = 38.8087 dyne/cm, for Co = 7e-7 mol/cm^3 at 25 degC) shows
+    # those equilibrium values are reproduced exactly only with
+    # a = 6.62e-9 mol/cm^3 = 6.62e-6 M (one decade higher), with
+    # Gamma_inf = 2.91e-10 mol/cm^2 = 2.91 umol/m^2 matching as given.
+    # Using this corrected value resolves fits that previously failed to
+    # converge to a sensible D for this preset.
+    "Triton X-100": SurfactantPreset("Triton X-100", 2.91, 6.62e-6),
     "HTAB": SurfactantPreset("HTAB", 8.00, 3.70e-4),
     "Octanol": SurfactantPreset("Octanol", 8.95, 5.57e-4),
+    # Known-good Langmuir parameters recovered from the KBC workbook's own
+    # saved/converged Console state for the data in "experimental_data.csv"
+    # (also labeled, inconsistently, "HTAB" and "Octanol" in different
+    # cells of that workbook) - the true chemical identity of this sample
+    # is not established, hence "Test" rather than a surfactant name.
+    "Test (unknown surfactant)": SurfactantPreset(
+        "Test (unknown surfactant)",
+        gamma_inf_umol_per_m2=2.91,
+        a_M=6.62e-6,
+        suggested_bulk_conc_M=7.0e-4,
+        suggested_D_m2_per_s=4.0e-10,
+        suggested_temperature_C=25.0,
+        suggested_sigma0_mN_per_m=72.5,
+        note=(
+            "Parameters recovered from the legacy workbook's own converged "
+            "fit of experimental_data.csv (Langmuir isotherm, 25 degC, "
+            "72.5 mN/m solvent tension). Chemical identity uncertain; use "
+            "only to validate this program's numerics against that known "
+            "result (RMSE ~1.0 mN/m, R^2 ~0.994 with D re-fit)."
+        ),
+    ),
 }

@@ -149,6 +149,7 @@ def export_fit_summary_csv(path: str, fit_result: FitResult, settings) -> None:
         "rmse_mN_per_m": N_per_m_to_mN_per_m(fit_result.rmse_N_per_m)
         if np.isfinite(fit_result.rmse_N_per_m)
         else float("nan"),
+        "r_squared": fit_result.r_squared,
         "n_observations": fit_result.n_observations,
         "success": fit_result.success,
         "message": fit_result.message,

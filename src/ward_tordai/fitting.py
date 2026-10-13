@@ -22,6 +22,15 @@ def _rmse_N_per_m(predicted: np.ndarray, observed: np.ndarray) -> float:
     return float(np.sqrt(np.mean((predicted - observed) ** 2)))
 
 
+def _r_squared(predicted: np.ndarray, observed: np.ndarray) -> float:
+    """Coefficient of determination, a fit-quality value alongside RMSE."""
+    ss_res = np.sum((predicted - observed) ** 2)
+    ss_tot = np.sum((observed - np.mean(observed)) ** 2)
+    if ss_tot == 0:
+        return float("nan")
+    return float(1.0 - ss_res / ss_tot)
+
+
 def simulate(settings: FitSettings, data: ExperimentalData) -> SimulationResult:
     """Run the forward solver at the data's measured times (the 'Simulate' action)."""
     return solve(settings, data.time_s)
@@ -113,6 +122,7 @@ def fit_diffusivity(
         )
 
     rmse = _rmse_N_per_m(final_simulation.sigma_N_per_m, data.sigma_N_per_m)
+    r_squared = _r_squared(final_simulation.sigma_N_per_m, data.sigma_N_per_m)
     return FitResult(
         fitted_D_m2_per_s=fitted_D,
         simulation=final_simulation,
@@ -120,5 +130,6 @@ def fit_diffusivity(
         n_observations=len(data),
         success=True,
         message="Fit succeeded.",
+        r_squared=r_squared,
         log10_D_bounds=log10_D_bounds,
     )

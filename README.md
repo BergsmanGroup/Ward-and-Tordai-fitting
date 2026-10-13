@@ -43,11 +43,14 @@ ambiguity with a system Python/pip installation.
    non-finite values, no non-positive times) and sorted by time;
    duplicate/replicate measurements are kept, not averaged.
 2. **Surfactant & concentration.** Pick a preset (Triton X-100, HTAB,
-   Octanol) or "Custom", and enter the bulk surfactant concentration with
-   its unit. Preset values are the lab handout's **Langmuir** equilibrium
-   parameters (23 degC, water) and are **not** independently validated
-   Frumkin/Generalized-Frumkin parameters; for those isotherms, treat the
-   preset numbers as reference/initial values only, or enter your own.
+   Octanol, or "Test (unknown surfactant)") or "Custom", and enter the
+   bulk surfactant concentration with its unit. Preset values are the lab
+   handout's **Langmuir** equilibrium parameters (23 degC, water) and are
+   **not** independently validated Frumkin/Generalized-Frumkin parameters;
+   for those isotherms, treat the preset numbers as reference/initial
+   values only, or enter your own. Selecting a preset also switches the
+   isotherm to Langmuir, since that is what the preset parameters are
+   defined for.
 3. **Isotherm.** Choose Henry, Langmuir, Frumkin, or Generalized Frumkin
    and set/confirm its parameters (`a`, `Gamma_inf`, and, for
    Frumkin/Generalized Frumkin, the interaction parameter `k` and, for
@@ -56,19 +59,51 @@ ambiguity with a system Python/pip installation.
    water), temperature (handout reference: 23 degC), and an initial guess
    for D (order 1e-9 to 1e-10 m^2/s is typical for small surfactants in
    water; this is only a labeled starting guess, not a validated default).
+   All numeric fields accept plain decimals or scientific notation
+   (e.g. `7e-11`, `7E-11`) and arbitrary digit counts (e.g. typing extra
+   trailing zeros will not be rejected).
 5. **Simulate** runs the forward model with the entered D, without
    fitting. **Fit D** holds concentration, temperature, solvent tension,
    and isotherm parameters fixed and optimizes `D` only (via
    `log10(D)`, bounded) to minimize the unweighted sum of squared
    surface-tension residuals at the measured surface ages. Fit bounds on
-   `log10(D)` are editable.
+   `log10(D)` are editable. On success, the fitted D is written back into
+   the D field (so it can be reused/inspected) and a entry is appended to
+   the results/log panel below the plot.
 6. The plot shows measured sigma(t) as points and the model sigma(t) as a
-   curve, with logarithmic time and surface tension in mN/m. The results
-   panel reports the fitted/used D, RMSE (mN/m), number of observations,
-   and the equilibrium surface excess/surface tension when numerically
-   determined.
-7. **Export** model predictions and the fit summary to CSV, and the plot
-   to PNG.
+   curve, with logarithmic time and surface tension in mN/m. The log
+   panel reports the fitted/used D, fit quality (RMSE in mN/m and
+   R-squared), number of observations, and the equilibrium surface
+   excess/surface tension when numerically determined. Each Simulate/Fit
+   D action appends a new entry rather than replacing the log.
+7. **Export** model predictions and the fit summary (including R-squared)
+   to CSV, and the plot to PNG.
+
+## The "Test (unknown surfactant)" preset
+
+`experimental_data.csv` (repo root) is real dynamic-surface-tension data
+previously analyzed with the legacy "000_Ward Tordai Fitting Program
+(KBC).xlsm" workbook. The workbook's own saved Console state for this
+data reports an equilibrium surface excess and surface tension of
+`Gamma_eq = 2.8827e-10 mol/cm^2` and `sigma_eq = 38.8087 dyne/cm` at a
+bulk concentration of `7e-7 mol/cm^3`, 72.5 dyne/cm solvent tension, and
+25 degC, using the Langmuir isotherm.
+
+Reproducing those exact equilibrium values (see
+`tests/test_gui.py::test_test_preset_reproduces_workbook_equilibrium_state`)
+requires `a = 6.62e-6 M` and `Gamma_inf = 2.91 umol/m^2` — **not** the
+`a = 6.62e-7 M` originally used for the Triton X-100 preset in this
+program (an apparent factor-of-ten unit error, now corrected in both
+presets; `Gamma_inf` was already correct). This also explains why fitting
+previously performed poorly with either the Triton X-100 or HTAB presets
+against this dataset. Selecting **Test (unknown surfactant)** loads these
+corrected, workbook-verified parameters together with the matching bulk
+concentration, temperature, and solvent tension; the true chemical
+identity of the sample is not established (the workbook itself labels it
+inconsistently as both "HTAB" and "Octanol" in different cells), hence
+the generic name. Fitting D against `experimental_data.csv` with this
+preset achieves RMSE ~1.0 mN/m and R-squared ~0.994, matching the
+workbook's own good-looking fit.
 
 ## Units
 
