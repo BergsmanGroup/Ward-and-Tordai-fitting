@@ -1,0 +1,314 @@
+#include <iostream>
+#include <cmath>
+#include <fstream>
+using namespace std;
+
+double cb, dif, rb, pi=3.14159265359, Tmpr=298, R=8.314, st0=0.072;
+double gamma, gamma_m, kh, kl, kf, A, nn=1, kfl, knl, kv;
+double T=3000, h=1, err=1e-30; int M=100;
+int isotherm, geometry, acc;
+
+inline double hr (double gamma) 
+{return (gamma/kh);}//henry's law
+inline double lm (double gamma)
+{return (1/kl*(gamma /(gamma_m -gamma)));}//Langmuir
+inline double fk(double gamma)
+{ return ((1/kf*(gamma/(gamma_m -gamma))*exp(-A*(gamma/gamma_m)))); }//Frumkin
+inline double fl (double gamma)
+{return (pow(gamma/kfl, knl));} //Freundlich
+inline double vm (double gamma)
+{ return (kv*(gamma/(gamma_m-gamma))*exp(gamma/(gamma_m-gamma)));}//Volmer
+
+inline double g (int geometry, double t)
+{
+       switch (geometry)
+       {
+              case 0: return ((2*sqrt(t*dif/pi)+ dif/rb*t)*cb);
+              case 1: return (sqrt(dif/pi)*2*cb*sqrt(t));
+       }
+       
+}
+inline double stn (int isotherm, double nn, double gamma)
+{
+       switch (isotherm)
+       {
+              case 1: return -nn*R*Tmpr*gamma;
+              break;
+              case 2: return nn*R*Tmpr*gamma_m*log(1-gamma/gamma_m);
+              break;
+              case 3: return nn*R*Tmpr*gamma_m*log(1-gamma/gamma_m)+R*nn*Tmpr*A/2*gamma_m*(gamma/gamma_m)*(gamma/gamma_m);
+              break;
+              case 4: return nn*knl*R*Tmpr*gamma;
+              break;
+              case 5: return nn*gamma_m*gamma_m/(gamma_m-gamma)*R*Tmpr;
+              break;
+       }
+       
+}
+
+inline double K (double t, double tao, double gamma,  int isotherm, int geometry)
+{
+       switch (geometry)
+       {
+              case 0: goto spherical;
+              break;
+              case 1: goto planar;
+              break;
+       } 
+       spherical:
+                 switch (isotherm)
+                 {
+                        case 1: return -(sqrt(dif/pi)/sqrt(t-tao)+dif/rb)*hr(gamma);
+                        break;
+                        case 2: return -(sqrt(dif/pi)/sqrt(t-tao)+dif/rb)*lm(gamma);
+                        break;
+                        case 3: return -(sqrt(dif/pi)/sqrt(t-tao)+dif/rb)*fk(gamma);
+                        break;
+                        case 4: return -(sqrt(dif/pi)/sqrt(t-tao)+dif/rb)*fl(gamma);
+                        break;
+                        case 5: return -(sqrt(dif/pi)/sqrt(t-tao)+dif/rb)*vm(gamma);
+                        break;
+                 }
+       planar:
+                 switch (isotherm)
+                  {
+                        case 1: return -sqrt(dif/pi)/sqrt(t-tao)*hr(gamma);
+                        break;
+                        case 2: return -sqrt(dif/pi)/sqrt(t-tao)*lm(gamma);
+                        break;
+                        case 3: return -sqrt(dif/pi)/sqrt(t-tao)*fk(gamma);
+                        break;
+                        case 4: return -sqrt(dif/pi)/sqrt(t-tao)*fl(gamma);
+                        break;
+                        case 5: return -sqrt(dif/pi)/sqrt(t-tao)*vm(gamma);
+                        break;
+                 }
+}     
+inline double rtbis (double tn, double x1, double x2)
+{
+       double dx, xmid, rtb, f, fmid;
+       f=(x1 - h/2 * K(tn, 0.9999*tn, x1, isotherm, geometry)-x2);
+       rtb= f<0.0 ? (dx=x2-x1, x1): (dx=x1-x2, x2);
+       for (int j=0; j<M; j++)
+       {
+           xmid=rtb+(dx*=0.5);
+           fmid=(xmid-h/2*K(tn, 0.9999*tn, xmid, isotherm, geometry)-x2);
+           if (fmid<0) rtb=xmid;
+           if (abs(dx)<err||fmid==0) {acc=1; return rtb;}
+       }
+       acc=0;return rtb;       
+}
+inline int getdata (int isotherm, int geometry)
+{
+       switch (geometry)
+       {
+              case 0: goto spherical_data; break;
+              case 1: goto planar_data; break;
+       }
+       spherical_data:
+                 switch (isotherm)
+                     {
+                        case 1: 
+                             cout<<"You chose a spherical interface and Henry's Law isotherm."<<endl
+                                 <<"Please enter radius of curvature (m): ";
+                             cin>>rb;
+                             cout<<"Please enter the Henry's Law constant (m) : ";
+                             cin>>kh;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 2: 
+                             cout<<"You chose a spherical interface and the Langmuir isotherm."<<endl
+                             <<"Please enter the radius of curvature (m) : ";
+                             cin>>rb;
+                             cout<<"Please enter the Langmuir constant (m^3/mol) : ";
+                             cin>>kl;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 3: 
+                             cout<<"You chose a spherical interface and the Frumkin isotherm"<<endl
+                             <<"Please enter the radius of curvature (m) : ";
+                             cin>>rb;
+                             cout<<"Please enter the Frumkin constant (m^3/mol) : ";
+                             cin>>kf;
+                             cout<<"Please enter the surface interation parameter (-) : ";
+                             cin>>A;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 4: 
+                             cout<<"You chose a spherical interface and the Freundlich isotherm"<<endl
+                             <<"Please enter the radius of curvature (m) : ";
+                             cin>>rb;
+                             cout<<"Please enter the Freundlich constant (mol^x.m^y) : ";
+                             cin>>kfl;
+                             cout<<"Please enter the consistency index (-) : ";
+                             cin>>knl;
+                             break;
+                        case 5: 
+                             cout<<"You chose a spherical interface and the Volmer isotherm."<<endl
+                             <<"Please enter the radius of curvature (m) : ";
+                             cin>>rb;
+                             cout<<"Please enter the Volmer constant (m^3/mol) : ";
+                             cin>>kv;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                     } 
+                     return 0;
+                                  
+       planar_data:
+                     switch (isotherm)
+                     {
+                        case 1: 
+                             cout<<"Please enter the Henry's Law constant (m) : ";
+                             cin>>kh;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 2: 
+                             cout<<"Please enter the Langmuir constant (m^3/mol) : ";
+                             cin>>kl;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 3:                              
+                             cout<<"Please enter the Frumkin constant (m^3/mol) : ";
+                             cin>>kf;
+                             cout<<"Please enter the surface interation parameter (-) : ";
+                             cin>>A;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                        case 4:                             
+                             cout<<"Please enter the Freundlich constant (mol^x.m^y) : ";
+                             cin>>kfl;
+                             cout<<"Please enter the consistency index (-) : ";
+                             cin>>knl;
+                             break;
+                        case 5:                             
+                             cout<<"Please enter the Volmer constant (m^3/mol) : ";
+                             cin>>kv;
+                             cout<<"Please enter the saturation surface excess (mol/m^2) : ";
+                             cin>>gamma_m;
+                             break;
+                     }
+                     return 0;
+                     
+}
+                             
+                      
+int main()
+{
+    cout<<"         Diffusion-controlled adsorption rate and DST calculator"<<endl
+    <<"-------------------------------------------------------------------------------"<<endl
+    <<"This code is written by Xueliang Bruce Li and Paul Stevenson of the University"<<endl
+    <<"of Newcastle, Australia. If using this code for publication, please  cite our "<<endl
+    <<"contribution. Any questions please contact us: paul.stevenson@newcastle.edu.au"<<endl
+    <<"-------------------------------------------------------------------------------"<<endl
+    <<"DISCLAIMER"<<endl
+    <<"This code is provided as is for educational and indicative purposes only. The"<<endl
+    <<"authors do not accept liability for, and make no claims regarding the accuracy"<<endl
+    <<"or applicability of calculations or formulae contained herein. The user may"<<endl
+    <<"only use information provided in this code at their own risk which is provided"<<endl
+    <<"without either express or implied guarantee."<<endl
+    <<"-------------------------------------------------------------------------------"<<endl;
+     system("PAUSE");
+    cout<<"-------------------------------------------------------------------------------"<<endl
+   <<"Adsorption onto a planar interface is calculated using the equation of Ward and"<<endl
+    <<"Tordai (Ward AFH, Tordai L 1946 Time-dependence of boundary tensions of solut-"<<endl
+    <<"ions: The role of diffusion in time effects, J Chem Phys 14, 453-461.)"<<endl
+    <<"Adsorption onto a convex interface is calculated using the equation of Lin et "<<endl
+    <<"al. (Lin et al. 1990 Diffusion-controlled surfactant adsorption studied by "<<endl
+    <<"pendant drop digitization,  AIChE Journal 36, 1785-1795.)"<<endl
+    <<"The forms of the adsorption isotherm adopted are those given in section 2.3 of:"<<endl
+    <<"Eastoe J, Dalton JS 2000 Dynamic surface tension and adsorption mechanisms of"<<endl
+    <<"surfactants at the air-water interface, Adv Colloid Int Sci 84, 103-144."<<endl
+    <<"-------------------------------------------------------------------------------"<<endl<<endl;
+    char option;
+    cout<<"Would you like to use the advanced mode (the advanced mode allows you to change"<<endl
+    <<"settings of the numerical routine such as the tolerance and maximum number of "<<endl
+    <<"iterations)? Use this mode only if the default settings does not produce "<<endl
+    <<"satisfactory results. (Y/N)";
+    cin>>option;
+    if (option== 'Y' || option== 'y')
+    {
+                 cout<<endl;
+                 cout<<"Please enter the tolerance you want to use (default: 1e-30) : ";
+                 cin>>err;
+                 cout<<"Please enter the maximum iteration you want to use (default: 100) : ";
+                 cin>>M;
+    }
+    cout<<endl
+    <<"-------------------------------------------------------------------------------"<<endl
+    <<"Now you will be asked to give values of the model parameters. Please use the"<<endl
+    <<"units suggested and the scientific notation, e.g., type 1e-6 for 0.000 001"<<endl;
+    system("PAUSE");
+    start:cout<<endl<<"Please enter the thermodynamic (absolute) temperature (K) :  ";
+          cin>>Tmpr;
+          cout<<"Please enter the surface tension of the solvent (N/m) :  ";
+          cin>>st0;
+          cout<<"Please enter the bulk concentration (mol/m^3) :  ";
+          cin>>cb;
+          cout<<"Please enter the molecular diffusivity (m/s^2) :  ";
+          cin>>dif;
+          cout<<"Please enter the value of n (-) :  ";
+          cin>>nn;
+          cout<<"Please enter the total time of simulation (s) :  ";
+          cin>>T;
+          cout<<"Please enter the time increment (s) :  ";
+          cin>>h;
+          cout<<endl<<"-------------------------------------------------------------------------------"<<endl
+              <<"Please specify the shape of the interface, type 0 (number zero) for a convex"<<endl
+              <<"spherical interface or 1 (number one) for a planar interface: ";
+              cin>>geometry;
+          cout<<endl<<"-------------------------------------------------------------------------------"<<endl
+                <<"Please specify the adsorption isotherm,"<<endl
+                <<" 1 for Henry's Law isotherm"<<endl
+                <<" 2 for the Langmuir isotherm"<<endl
+                <<" 3 for the Frumkin isotherm"<<endl
+                <<" 4 for the Freundlich isotherm"<<endl
+                <<" 5 for the Volmer isotherm"<<endl;
+          cin>>isotherm;
+          getdata(isotherm, geometry);
+          cout<<endl<<"Please check the values you have entered. Restart the program if any mistakes."<<endl; system("PAUSE");
+          
+    ofstream results;
+    results.open ("Simulation.xls");
+    results<< 0 << '\t' << 0 <<'\t'<<st0<<'\n';  
+    
+    int N = int(ceil(T/h));
+    double t[N], gamma[N], st[N];
+    for(int i=0; i<=N; i++) t[i]=h*i, gamma[i]=0, st[i]=st0;
+    
+    for (int n=1; n<=N; n++)
+    {
+        double sum=0;
+        for (int j=1; j<n; j++) sum=sum+K(t[n], t[j], gamma[j], isotherm, geometry);
+        double x=g(geometry, t[n])+h*sum;    
+        gamma[n]=rtbis(t[n], gamma[n-1], x);
+        st[n]+=stn(isotherm, nn, gamma[n]);
+        results<<t[n]<<'\t'<<gamma[n]<<'\t'<<st[n]<<'\n';
+        cout<<t[n]<<'\t'<<gamma[n]<<'\t'<<st[n]<<'\n';
+    }
+    results.close ();
+    if (acc==0)
+    cout<<"-------------------------------------------------------------------------------"<<endl
+        <<"  WARNING: Required accuracy "<<err<<" was not reached in "<<M<<" iterations !"<<endl
+        <<"Please restart the calculator into advanced mode to adjust numerical settings."<<endl;
+    cout<<"-------------------------------------------------------------------------------"<<endl
+        <<"An Excel spreadsheet entitled 'Simulation.xls' containing surface excess data"<<endl
+        <<"and DST data has been created in the same directory of this application. In the"<<endl
+        <<"output, the first column is time, the second column is surface excess, and the"<<endl
+        <<"third column is the dynamic surface tension. Please save it to another place or"<<endl
+        <<"rename it before running another simulation, or it will be overwriteen."<<endl
+        <<"Continue? (Y/N) ";
+    cin>>option;
+    if (option== 'Y' || option== 'y') goto start;
+    return 0;
+    
+}
+
+
+       
