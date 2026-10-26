@@ -116,7 +116,7 @@ require a separate mobile UI/application implementation.
    for experimental points and the Ward-Tordai line. **Export fit summary**
    writes an Excel workbook containing the fit summary, measured-time
    predictions, and a logarithmically spaced simulation dataset from the
-   plotted time bounds (100 points by default). **Export plot PNG** writes
+   plotted time bounds (1000 points by default). **Export plot PNG** writes
    a white-background image at 330 DPI.
 
 ## Units

@@ -988,7 +988,7 @@ class MainWindow(QMainWindow):
         export_png_btn.clicked.connect(self._on_export_png)
         self.simulation_point_count = QSpinBox()
         self.simulation_point_count.setRange(2, 100000)
-        self.simulation_point_count.setValue(100)
+        self.simulation_point_count.setValue(1000)
         export_row.addWidget(QLabel("Simulation points:"))
         export_row.addWidget(self.simulation_point_count)
         export_row.addWidget(export_summary_btn)
@@ -1121,10 +1121,12 @@ class MainWindow(QMainWindow):
 
     def _simulation_grid_data(self, data: ExperimentalData) -> ExperimentalData:
         count = self.simulation_point_count.value()
-        if data.time_s[0] == data.time_s[-1]:
-            times = np.full(count, data.time_s[0], dtype=float)
+        minimum_time = float(np.min(data.time_s))
+        maximum_time = float(np.max(data.time_s))
+        if minimum_time == maximum_time:
+            times = np.full(count, minimum_time, dtype=float)
         else:
-            times = np.geomspace(data.time_s[0], data.time_s[-1], count)
+            times = np.geomspace(minimum_time, maximum_time, count)
         return ExperimentalData(times, np.zeros(count, dtype=float))
 
     def _on_simulate(self) -> None:

@@ -191,7 +191,7 @@ def export_fit_summary_workbook(
     data: ExperimentalData,
     fit_result: FitResult,
     settings,
-    simulation_point_count: int = 100,
+    simulation_point_count: int = 1000,
 ) -> None:
     """Export fit, measured predictions, and a logarithmic simulation grid."""
     if not fit_result.success or fit_result.simulation is None:

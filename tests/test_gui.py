@@ -66,7 +66,7 @@ def test_main_window_contains_export_and_plot_controls_without_preset_popup(qapp
 
     window._on_solute_changed("Triton X-100")
 
-    assert window.simulation_point_count.value() == 100
+    assert window.simulation_point_count.value() == 1000
     assert window.plot_title_value.placeholderText() == "Optional plot title"
     assert window.experimental_legend_value.text() == "Experimental"
     assert window.model_legend_value.text() == "Ward-Tordai"
@@ -94,12 +94,17 @@ def test_main_window_contains_export_and_plot_controls_without_preset_popup(qapp
 def test_simulation_grid_uses_requested_number_of_points(qapp):
     window = MainWindow()
     window.data = ExperimentalData(
-        np.array([0.001, 0.01, 1.0]),
+        np.array([1.0, 0.001, 0.01]),
         np.array([0.071, 0.060, 0.040]),
     )
     grid = window._simulation_grid_data(window.data)
-    assert len(grid.time_s) == window.simulation_point_count.value() == 100
+    assert len(grid.time_s) == window.simulation_point_count.value() == 1000
     assert not np.array_equal(grid.time_s, window.data.time_s)
     assert np.all(np.diff(grid.time_s) > 0)
+    np.testing.assert_allclose(
+        np.diff(np.log(grid.time_s)),
+        np.diff(np.log(grid.time_s))[0],
+    )
+    assert grid.time_s[0] == pytest.approx(window.data.time_s.min())
+    assert grid.time_s[-1] == pytest.approx(window.data.time_s.max())
     window.close()
-
