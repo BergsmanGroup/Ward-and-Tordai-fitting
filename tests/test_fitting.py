@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ward_tordai.fitting import fit_diffusivity, simulate
+from ward_tordai.fitting import fit_diffusivity, fit_profiled_parameters, simulate
 from ward_tordai.models import ExperimentalData, FitSettings
 from ward_tordai.solver import solve
 
@@ -91,3 +91,44 @@ def test_fit_reports_failure_for_impossible_bounds():
     )
     result = fit_diffusivity(bad_settings, data)
     assert not result.success
+
+
+def test_profiled_fit_keeps_d_primary_and_reports_optional_parameter_profile():
+    times = np.geomspace(15.0, 10000.0, 20)
+    true_settings = _settings(1.1e-13)
+    data = ExperimentalData(
+        time_s=times,
+        sigma_N_per_m=solve(true_settings, times).sigma_N_per_m,
+    )
+    result = fit_profiled_parameters(
+        _settings(5e-10),
+        data,
+        fit_concentration=True,
+        concentration_bounds_mol_per_m3=(4e-3, 6e-3),
+        log10_D_bounds=(-14.0, -8.0),
+    )
+
+    assert result.success, result.message
+    assert result.fitted_D_m2_per_s == pytest.approx(1.1e-13, rel=0.1)
+    assert 4e-3 <= result.fitted_parameters["bulk_concentration_mol_per_m3"] <= 6e-3
+    assert "bulk_concentration_mol_per_m3" in result.parameter_profile_rmse_span_N_per_m
+    assert result.optimized_settings is not None
+    assert result.time_offset_s == 0.0
+
+
+def test_profiled_fit_reports_candidate_progress():
+    times = np.geomspace(15.0, 1000.0, 8)
+    settings = _settings(1e-13)
+    simulation = solve(settings, times)
+    progress = []
+    result = fit_profiled_parameters(
+        settings,
+        ExperimentalData(times, simulation.sigma_N_per_m),
+        d_n_values=3,
+        progress_callback=lambda completed, total: progress.append((completed, total)),
+        log10_D_bounds=(-14.0, -8.0),
+    )
+
+    assert result.success
+    assert progress[0] == (0, 3)
+    assert progress[-1] == (3, 3)

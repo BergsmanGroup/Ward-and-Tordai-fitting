@@ -126,12 +126,3 @@ def test_triton_x100_preset_a_matches_workbook_cross_validation():
     preset = SURFACTANT_PRESETS["Triton X-100"]
     assert preset.a_M == pytest.approx(6.62e-6)
     assert preset.gamma_inf_umol_per_m2 == pytest.approx(2.91)
-
-
-def test_presets_include_test_case():
-    assert "Test (unknown surfactant)" in SURFACTANT_PRESETS
-    preset = SURFACTANT_PRESETS["Test (unknown surfactant)"]
-    assert preset.suggested_bulk_conc_M is not None
-    assert preset.suggested_D_m2_per_s is not None
-    assert preset.suggested_temperature_C is not None
-    assert preset.suggested_sigma0_mN_per_m is not None

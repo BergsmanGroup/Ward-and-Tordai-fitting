@@ -67,3 +67,14 @@ nosetests.xml
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local student profiles (defaults in config/default_profiles are tracked)
+custom_profiles/
+
+# Generated fit/export artifacts
+fit_summary.csv
+fit_summary.xlsx
+predictions.csv
+
+# Ad-hoc experimental trial exports; keep canonical example datasets tracked
+*Trial*.csv

@@ -2,10 +2,11 @@ import numpy as np
 import pytest
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QValidator
 
-from ward_tordai.gui import ScientificDoubleSpinBox
+from ward_tordai.gui import MainWindow, ScientificDoubleSpinBox
 from ward_tordai.io import load_csv
-from ward_tordai.isotherms import SURFACTANT_PRESETS
+from ward_tordai.models import ExperimentalData
 from ward_tordai.units import TensionUnit, TimeUnit
 
 
@@ -40,73 +41,65 @@ def test_scientific_spin_box_validate_accepts_in_progress_exponent(qapp):
     assert state != QValidator.State.Invalid
 
 
-def test_test_preset_reproduces_workbook_equilibrium_state(qapp):
-    """The 'Test' preset's Langmuir parameters, bulk concentration,
-    temperature, and solvent tension must exactly reproduce the legacy
-    KBC workbook's own saved Console equilibrium state (Gamma_eq =
-    2.8827375392714613e-10 mol/cm^2 = 2.8827... umol/m^2, sigma_eq =
-    38.80869748765195 dyne/cm = mN/m)."""
-    from ward_tordai.isotherms import LangmuirIsotherm
-    from ward_tordai.units import (
-        ConcentrationUnit,
-        GammaInfUnit,
-        celsius_to_kelvin,
-        concentration_to_mol_per_m3,
-        gamma_inf_to_mol_per_m2,
+def test_scientific_spin_box_accepts_suffix_and_uses_additive_tenth_steps(qapp):
+    box = ScientificDoubleSpinBox(0.2, 2.0)
+    box.setSuffix(" mM")
+    box.setSingleStep(0.1)
+    box._use_additive_step = True
+    state, _, _ = box.validate("1.2 mM", len("1.2 mM"))
+    assert state == QValidator.State.Acceptable
+    assert box.valueFromText("1.2 mM") == pytest.approx(1.2)
+    box.setValue(1.2)
+    box.stepBy(1)
+    assert box.value() == pytest.approx(1.3)
+    box.stepBy(-2)
+    assert box.value() == pytest.approx(1.1)
+
+
+def test_main_window_contains_export_and_plot_controls_without_preset_popup(qapp, monkeypatch):
+    information_calls = []
+    monkeypatch.setattr(
+        "ward_tordai.gui.QMessageBox.information",
+        lambda *args, **kwargs: information_calls.append((args, kwargs)),
     )
+    window = MainWindow()
 
-    preset = SURFACTANT_PRESETS["Test (unknown surfactant)"]
-    iso = LangmuirIsotherm(
-        a_mol_per_m3=concentration_to_mol_per_m3(preset.a_M, ConcentrationUnit.MOLAR),
-        gamma_inf_mol_per_m2=gamma_inf_to_mol_per_m2(
-            preset.gamma_inf_umol_per_m2, GammaInfUnit.MICROMOL_PER_M2
-        ),
+    window._on_solute_changed("Triton X-100")
+
+    assert window.simulation_point_count.value() == 100
+    assert window.plot_title_value.placeholderText() == "Optional plot title"
+    assert window.experimental_legend_value.text() == "Experimental"
+    assert window.model_legend_value.text() == "Ward-Tordai"
+    assert window.permutation_count_label.text() == "Fit permutations: 1 (D evaluations: 25)"
+    assert window.temperature_last_used.text() == "23"
+    assert window.concentration_last_used.text() == "1"
+    assert window.sigma0_last_used.text() == "72.5"
+    assert window.time_offset_last_used.text() == "0.0"
+    assert window.temperature_last_used.isReadOnly() is False
+    assert window.temperature_lower.isEnabled() is False
+    assert window.fit_isotherm_lower["a_mol_per_m3"].minimum() == pytest.approx(1e-6)
+    assert window.fit_isotherm_upper["a_mol_per_m3"].maximum() == pytest.approx(1e-3)
+    assert window.fit_isotherm_lower["gamma_inf_mol_per_m2"].minimum() == pytest.approx(1.0)
+    assert window.fit_isotherm_upper["gamma_inf_mol_per_m2"].maximum() == pytest.approx(10.0)
+    assert window._build_settings().isotherm_params["a_mol_per_m3"] == pytest.approx(6.62e-3)
+    window.fit_temperature_check.setChecked(True)
+    assert window.temperature_last_used.isReadOnly() is True
+    assert window.temperature_lower.isEnabled() is True
+    window.plot_title_value.setText("Live plot title")
+    assert window.figure.axes[0].get_title() == "Live plot title"
+    assert not information_calls
+    window.close()
+
+
+def test_simulation_grid_uses_requested_number_of_points(qapp):
+    window = MainWindow()
+    window.data = ExperimentalData(
+        np.array([0.001, 0.01, 1.0]),
+        np.array([0.071, 0.060, 0.040]),
     )
-    cb = concentration_to_mol_per_m3(preset.suggested_bulk_conc_M, ConcentrationUnit.MOLAR)
-    geq = iso.equilibrium_gamma(cb)
-    seq = iso.surface_tension(
-        geq,
-        celsius_to_kelvin(preset.suggested_temperature_C),
-        preset.suggested_sigma0_mN_per_m / 1000.0,
-    )
-    assert geq * 1e6 == pytest.approx(2.8827375392714613, rel=1e-4)
-    assert seq * 1000 == pytest.approx(38.80869748765195, rel=1e-4)
+    grid = window._simulation_grid_data(window.data)
+    assert len(grid.time_s) == window.simulation_point_count.value() == 100
+    assert not np.array_equal(grid.time_s, window.data.time_s)
+    assert np.all(np.diff(grid.time_s) > 0)
+    window.close()
 
-
-def test_test_preset_fit_quality_against_real_experimental_data():
-    """Fitting D with the 'Test' preset's parameters against the real
-    experimental_data.csv (the same dataset used in the legacy workbook)
-    must achieve a good fit (R^2 > 0.99), matching the workbook's own
-    good-looking result."""
-    import os
-
-    from ward_tordai.fitting import fit_diffusivity
-    from ward_tordai.models import FitSettings
-    from ward_tordai.units import ConcentrationUnit, GammaInfUnit, celsius_to_kelvin, concentration_to_mol_per_m3, gamma_inf_to_mol_per_m2
-
-    repo_root = os.path.join(os.path.dirname(__file__), "..")
-    csv_path = os.path.join(repo_root, "experimental_data.csv")
-    if not os.path.exists(csv_path):
-        pytest.skip("experimental_data.csv not present in this checkout")
-
-    data = load_csv(csv_path, time_unit=TimeUnit.SECONDS, tension_unit=TensionUnit.DYNE_PER_CM)
-    preset = SURFACTANT_PRESETS["Test (unknown surfactant)"]
-    settings = FitSettings(
-        isotherm_name="langmuir",
-        isotherm_params={
-            "a_mol_per_m3": concentration_to_mol_per_m3(preset.a_M, ConcentrationUnit.MOLAR),
-            "gamma_inf_mol_per_m2": gamma_inf_to_mol_per_m2(
-                preset.gamma_inf_umol_per_m2, GammaInfUnit.MICROMOL_PER_M2
-            ),
-        },
-        bulk_concentration_mol_per_m3=concentration_to_mol_per_m3(
-            preset.suggested_bulk_conc_M, ConcentrationUnit.MOLAR
-        ),
-        temperature_K=celsius_to_kelvin(preset.suggested_temperature_C),
-        solvent_sigma0_N_per_m=preset.suggested_sigma0_mN_per_m / 1000.0,
-        diffusion_coefficient_m2_per_s=preset.suggested_D_m2_per_s,
-    )
-    fit = fit_diffusivity(settings, data)
-    assert fit.success, fit.message
-    assert fit.r_squared > 0.99
-    assert fit.rmse_N_per_m * 1000 < 1.5  # mN/m

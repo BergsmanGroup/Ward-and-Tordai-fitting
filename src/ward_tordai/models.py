@@ -81,7 +81,7 @@ class SimulationResult:
 
 @dataclass
 class FitResult:
-    """Output of a D-only optimization.
+    """Output of a D optimization, optionally profiled over other inputs.
 
     ``r_squared`` is the coefficient of determination
     (``1 - SS_res/SS_tot``) of the fitted curve against the measured
@@ -96,3 +96,7 @@ class FitResult:
     message: str = ""
     r_squared: float = float("nan")
     log10_D_bounds: tuple = field(default_factory=lambda: (-13.0, -7.0))
+    fitted_parameters: dict[str, float] = field(default_factory=dict)
+    parameter_profile_rmse_span_N_per_m: dict[str, float] = field(default_factory=dict)
+    optimized_settings: Optional[FitSettings] = None
+    time_offset_s: float = 0.0

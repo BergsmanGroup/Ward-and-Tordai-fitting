@@ -316,9 +316,8 @@ class SurfactantPreset:
     values only).
 
     Optional ``suggested_*`` fields provide convenience starting values for
-    an associated known dataset (e.g. the "Test" preset below); they are
-    left as ``None`` for the three handout presets, which are not tied to
-    a specific concentration or D.
+    a specific dataset; they are left as ``None`` for the three handout
+    presets, which are not tied to a specific concentration or D.
     """
 
     display_name: str
@@ -345,25 +344,4 @@ SURFACTANT_PRESETS: Dict[str, SurfactantPreset] = {
     "Triton X-100": SurfactantPreset("Triton X-100", 2.91, 6.62e-6),
     "HTAB": SurfactantPreset("HTAB", 8.00, 3.70e-4),
     "Octanol": SurfactantPreset("Octanol", 8.95, 5.57e-4),
-    # Known-good Langmuir parameters recovered from the KBC workbook's own
-    # saved/converged Console state for the data in "experimental_data.csv"
-    # (also labeled, inconsistently, "HTAB" and "Octanol" in different
-    # cells of that workbook) - the true chemical identity of this sample
-    # is not established, hence "Test" rather than a surfactant name.
-    "Test (unknown surfactant)": SurfactantPreset(
-        "Test (unknown surfactant)",
-        gamma_inf_umol_per_m2=2.91,
-        a_M=6.62e-6,
-        suggested_bulk_conc_M=7.0e-4,
-        suggested_D_m2_per_s=4.0e-10,
-        suggested_temperature_C=25.0,
-        suggested_sigma0_mN_per_m=72.5,
-        note=(
-            "Parameters recovered from the legacy workbook's own converged "
-            "fit of experimental_data.csv (Langmuir isotherm, 25 degC, "
-            "72.5 mN/m solvent tension). Chemical identity uncertain; use "
-            "only to validate this program's numerics against that known "
-            "result (RMSE ~1.0 mN/m, R^2 ~0.994 with D re-fit)."
-        ),
-    ),
 }

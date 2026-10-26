@@ -23,7 +23,7 @@ linear extrapolation methods).
 
    This creates a `.venv` virtual environment and installs the
    `ward_tordai` package and its dependencies (NumPy, SciPy, pandas,
-   Matplotlib, PySide6, pytest) into it.
+   Matplotlib, openpyxl, PySide6, pytest) into it.
 
 ## Launching
 
@@ -34,6 +34,30 @@ run.bat
 This always uses `.venv\Scripts\python.exe` directly, avoiding any
 ambiguity with a system Python/pip installation.
 
+## Building a standalone desktop application
+
+Run `python package.py` from this folder on the target operating system. The
+script creates `.venv` if needed, installs the PyInstaller build dependency,
+and packages the application:
+
+- Windows creates `dist\WardTordai.exe`.
+- macOS creates `dist/WardTordai.app`.
+
+PyInstaller does not cross-compile Windows and macOS applications. To build
+both packages while working on Windows, push the branch to GitHub and run
+the **Package desktop applications** workflow from the Actions tab. It uses
+native Windows and macOS runners and publishes `WardTordai-windows` and
+`WardTordai-macos` artifacts. Alternatively, run
+`.\package-all.ps1` from PowerShell (with the GitHub CLI installed and
+authenticated) to dispatch that workflow for the current branch. The built
+applications include their Python dependencies and bundled default-profile
+JSON files, so Python is not required on student computers. On Windows,
+`build.bat` remains a convenience wrapper around the local Windows build.
+
+The macOS `.app` is for Mac students. iOS/iPadOS uses `.ipa` packages and
+cannot run this PySide6 desktop application; producing an iOS app would
+require a separate mobile UI/application implementation.
+
 ## Workflow
 
 1. **Load data.** Load a CSV (two columns: surface age and surface
@@ -42,68 +66,58 @@ ambiguity with a system Python/pip installation.
    identical) matching your data. Data is validated (no missing/
    non-finite values, no non-positive times) and sorted by time;
    duplicate/replicate measurements are kept, not averaged.
-2. **Surfactant & concentration.** Pick a preset (Triton X-100, HTAB,
-   Octanol, or "Test (unknown surfactant)") or "Custom", and enter the
-   bulk surfactant concentration with its unit. Preset values are the lab
-   handout's **Langmuir** equilibrium parameters (23 degC, water) and are
-   **not** independently validated Frumkin/Generalized-Frumkin parameters;
-   for those isotherms, treat the preset numbers as reference/initial
-   values only, or enter your own. Selecting a preset also switches the
-   isotherm to Langmuir, since that is what the preset parameters are
-   defined for.
-3. **Isotherm.** Choose Henry, Langmuir, Frumkin, or Generalized Frumkin
-   and set/confirm its parameters (`a`, `Gamma_inf`, and, for
-   Frumkin/Generalized Frumkin, the interaction parameter `k` and, for
-   Generalized Frumkin, the exponent `p`).
-4. **Conditions.** Set the solvent surface tension (default 72.5 mN/m for
-   water), temperature (handout reference: 23 degC), and an initial guess
-   for D (order 1e-9 to 1e-10 m^2/s is typical for small surfactants in
-   water; this is only a labeled starting guess, not a validated default).
+2. **Fitting profile.** Select a fitting
+   profile (Triton X-100, HTAB, or Octanol) or a
+   custom profile, and select the isotherm. The single parameter table contains D,
+   temperature, concentration, solvent surface tension, time offset, and the
+   parameters applicable to the selected isotherm. Henry shows `a`; Langmuir
+   shows `a` and `Gamma_inf`; Frumkin additionally shows `k`; and Generalized
+   Frumkin additionally shows `p`. The solvent baseline defaults to 72.5
+   mN/m. Selecting one of the built-in solutes sets the Langmuir parameters
+   and matching suggested conditions.
+   The **Save** action stores the complete Step 2 table (including bounds,
+   N-values, Value fields, fit checkboxes, and isotherm) in
+   as a JSON file in a `custom_profiles` folder under the program's current
+   working directory. Built-in profiles are stored as JSON files in the
+   bundled `config/default_profiles` folder and cannot
+   be overwritten. Editing a built-in creates a `Custom (SOLUTE)` profile,
+   with numbered suffixes when needed. The **Refresh** button rereads that
+   folder, and custom profiles may be renamed or deleted in the save dialog.
    All numeric fields accept plain decimals or scientific notation
    (e.g. `7e-11`, `7E-11`) and arbitrary digit counts (e.g. typing extra
    trailing zeros will not be rejected).
-5. **Simulate** runs the forward model with the entered D, without
-   fitting. **Fit D** holds concentration, temperature, solvent tension,
-   and isotherm parameters fixed and optimizes `D` only (via
-   `log10(D)`, bounded) to minimize the unweighted sum of squared
-   surface-tension residuals at the measured surface ages. Fit bounds on
-   `log10(D)` are editable. On success, the fitted D is written back into
-   the D field (so it can be reused/inspected) and a entry is appended to
-   the results/log panel below the plot.
-6. The plot shows measured sigma(t) as points and the model sigma(t) as a
+3. **Simulate** runs the forward model with the entered D, without
+   fitting, on the selected number of logarithmically spaced simulation
+   points (100 by default). **Fit D / selected parameters** always fits D
+   first. Optional
+   checkboxes can enable bounded profile fits for bulk concentration
+   (0.2-2.0 mM), temperature (20-26 degC by default), solvent surface
+   tension, time offset, and the selected isotherm parameters. D is always
+   fitted. For each optional row, checking
+   Fit enables the bounds and locks Value; clearing Fit disables the
+   bounds and uses the editable Value field as a fixed input. An N values
+   control sets how many values are tested between each selected bound. The Value
+   column stores the initial guesses before the first fit and is updated
+   after each fit.
+   Every trial value of an optional parameter runs a complete D fit, so D
+   remains the primary reported estimate. Fit bounds on `log10(D)` and the
+   optional parameters are editable. On success, fitted values are written
+   back into the input fields and an entry is appended to the results/log
+   panel below the plot. The log also reports a local RMSE-profile
+   diagnostic for each optional parameter; a small profile change indicates
+   weak uniqueness.
+4. The plot shows measured sigma(t) as points and the model sigma(t) as a
    curve, with logarithmic time and surface tension in mN/m. The log
    panel reports the fitted/used D, fit quality (RMSE in mN/m and
    R-squared), number of observations, and the equilibrium surface
    excess/surface tension when numerically determined. Each Simulate/Fit
    D action appends a new entry rather than replacing the log.
-7. **Export** model predictions and the fit summary (including R-squared)
-   to CSV, and the plot to PNG.
-
-## The "Test (unknown surfactant)" preset
-
-`experimental_data.csv` (repo root) is real dynamic-surface-tension data
-previously analyzed with the legacy "000_Ward Tordai Fitting Program
-(KBC).xlsm" workbook. The workbook's own saved Console state for this
-data reports an equilibrium surface excess and surface tension of
-`Gamma_eq = 2.8827e-10 mol/cm^2` and `sigma_eq = 38.8087 dyne/cm` at a
-bulk concentration of `7e-7 mol/cm^3`, 72.5 dyne/cm solvent tension, and
-25 degC, using the Langmuir isotherm.
-
-Reproducing those exact equilibrium values (see
-`tests/test_gui.py::test_test_preset_reproduces_workbook_equilibrium_state`)
-requires `a = 6.62e-6 M` and `Gamma_inf = 2.91 umol/m^2` — **not** the
-`a = 6.62e-7 M` originally used for the Triton X-100 preset in this
-program (an apparent factor-of-ten unit error, now corrected in both
-presets; `Gamma_inf` was already correct). This also explains why fitting
-previously performed poorly with either the Triton X-100 or HTAB presets
-against this dataset. Selecting **Test (unknown surfactant)** loads these
-corrected, workbook-verified parameters together with the matching bulk
-concentration, temperature, and solvent tension; the true chemical
-identity of the sample is not established (the workbook itself labels it
-inconsistently as both "HTAB" and "Octanol" in different cells), hence
-the generic name. Fitting D against `experimental_data.csv` with this
-preset achieves RMSE ~1.0 mN/m and R-squared ~0.994, matching the
-workbook's own good-looking fit.
+5. **Plot and export.** Set an optional plot title and custom legend labels
+   for experimental points and the Ward-Tordai line. **Export fit summary**
+   writes an Excel workbook containing the fit summary, measured-time
+   predictions, and a logarithmically spaced simulation dataset from the
+   plotted time bounds (100 points by default). **Export plot PNG** writes
+   a white-background image at 330 DPI.
 
 ## Units
 
@@ -171,8 +185,9 @@ real experimental data.
 
 - Only the planar geometry is supported (no spherical/curved-interface
   correction, no micelle-breakup/post-CMC model).
-- Only D is fitted; isotherm parameters, concentration, temperature, and
-  solvent tension must be supplied and are held fixed during fitting.
+- D is always fitted. The supplied isotherm parameters and temperature remain
+  fixed; concentration, solvent tension, and effective time offset may be
+  enabled as bounded teaching-oriented profile parameters.
 - Replicates are fit individually by default (each data point
   contributes its own residual); there is no built-in replicate-averaging
   option beyond pre-averaging the input data yourself.

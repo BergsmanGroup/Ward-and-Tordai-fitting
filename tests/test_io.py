@@ -5,6 +5,7 @@ import pytest
 from ward_tordai.io import (
     DataLoadError,
     export_fit_summary_csv,
+    export_fit_summary_workbook,
     export_predictions_csv,
     load_csv,
     parse_text_columns,
@@ -115,3 +116,71 @@ def test_export_fit_summary_csv(tmp_path):
     assert df.loc[0, "fitted_D_m2_per_s"] == pytest.approx(1.2e-9)
     assert df.loc[0, "isotherm_param_a_mol_per_m3"] == pytest.approx(1e-4)
     assert df.loc[0, "r_squared"] == pytest.approx(0.987)
+
+
+def test_export_fit_summary_workbook_has_three_expected_sheets(tmp_path):
+    from ward_tordai.fitting import simulate
+
+    data = ExperimentalData(
+        time_s=np.array([0.01, 0.1, 1.0]),
+        sigma_N_per_m=np.array([0.070, 0.060, 0.050]),
+    )
+    settings = FitSettings(
+        isotherm_name="langmuir",
+        isotherm_params={"a_mol_per_m3": 6.62e-3, "gamma_inf_mol_per_m2": 2.91e-6},
+        bulk_concentration_mol_per_m3=0.7,
+        temperature_K=298.15,
+        solvent_sigma0_N_per_m=0.0725,
+        diffusion_coefficient_m2_per_s=4e-10,
+    )
+    simulation = simulate(settings, data)
+    assert simulation.converged
+    fit_result = FitResult(
+        fitted_D_m2_per_s=4e-10,
+        simulation=simulation,
+        rmse_N_per_m=0.001,
+        n_observations=len(data),
+        success=True,
+        message="Fit succeeded.",
+        r_squared=0.9,
+    )
+    path = tmp_path / "fit.xlsx"
+
+    export_fit_summary_workbook(path, data, fit_result, settings, 12)
+
+    workbook = pd.ExcelFile(path)
+    assert workbook.sheet_names == [
+        "Fit Summary",
+        "Predictions",
+        "Simulation Dataset (n=12)",
+    ]
+    summary = pd.read_excel(path, sheet_name="Fit Summary")
+    predictions = pd.read_excel(path, sheet_name="Predictions")
+    grid = pd.read_excel(path, sheet_name="Simulation Dataset (n=12)")
+    assert summary.loc[0, "fitted_D_m2_per_s"] == pytest.approx(4e-10)
+    assert len(predictions) == len(data)
+    assert len(grid) == 12
+    assert grid["time_s"].iloc[0] == pytest.approx(data.time_s.min())
+    assert grid["time_s"].iloc[-1] == pytest.approx(data.time_s.max())
+    np.testing.assert_allclose(
+        np.diff(np.log(grid["time_s"])),
+        np.diff(np.log(grid["time_s"]))[0],
+    )
+    assert settings.diffusion_coefficient_m2_per_s == pytest.approx(4e-10)
+
+
+def test_export_plot_png_is_white_and_330_dpi(tmp_path):
+    from PIL import Image
+    from matplotlib.figure import Figure
+
+    from ward_tordai.plotting import save_figure_png
+
+    figure = Figure(figsize=(1, 1), facecolor="none")
+    figure.add_subplot(111).plot([0, 1], [0, 1])
+    path = tmp_path / "plot.png"
+
+    save_figure_png(figure, path)
+
+    with Image.open(path) as image:
+        assert image.info["dpi"][0] == pytest.approx(330, abs=1)
+        assert image.getpixel((0, 0)) == (255, 255, 255, 255)

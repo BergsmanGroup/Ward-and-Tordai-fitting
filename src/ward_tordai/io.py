@@ -5,11 +5,13 @@ No GUI code here; the GUI calls these pure functions.
 from __future__ import annotations
 
 import io as _io
+from dataclasses import replace
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
+from .fitting import simulate
 from .models import ExperimentalData, FitResult, SimulationResult
 from .units import (
     N_per_m_to_mN_per_m,
@@ -126,12 +128,21 @@ def export_predictions_csv(
     time_unit: TimeUnit = TimeUnit.SECONDS,
 ) -> None:
     """Export measured vs. predicted surface tension at the measured times."""
+    predictions_dataframe(data, simulation, time_unit).to_csv(path, index=False)
+
+
+def predictions_dataframe(
+    data: ExperimentalData,
+    simulation: SimulationResult,
+    time_unit: TimeUnit = TimeUnit.SECONDS,
+) -> pd.DataFrame:
+    """Build the measured-versus-predicted table used by CSV and workbook exports."""
     if simulation.time_s.shape != data.time_s.shape or not np.allclose(
         np.sort(simulation.time_s), np.sort(data.time_s)
     ):
         raise ValueError("simulation must have been evaluated at the data's measured times")
 
-    out = pd.DataFrame(
+    return pd.DataFrame(
         {
             f"time_{time_unit.value}": seconds_to_time(data.time_s, time_unit),
             "sigma_measured_mN_per_m": N_per_m_to_mN_per_m(data.sigma_N_per_m),
@@ -139,11 +150,15 @@ def export_predictions_csv(
             "gamma_predicted_mol_per_m2": simulation.gamma_mol_per_m2,
         }
     )
-    out.to_csv(path, index=False)
 
 
 def export_fit_summary_csv(path: str, fit_result: FitResult, settings) -> None:
     """Export a one-row CSV summarizing the fit and the parameters used."""
+    fit_summary_dataframe(fit_result, settings).to_csv(path, index=False)
+
+
+def fit_summary_dataframe(fit_result: FitResult, settings) -> pd.DataFrame:
+    """Build the fit summary table used by CSV and workbook exports."""
     row = {
         "fitted_D_m2_per_s": fit_result.fitted_D_m2_per_s,
         "rmse_mN_per_m": N_per_m_to_mN_per_m(fit_result.rmse_N_per_m)
@@ -168,4 +183,58 @@ def export_fit_summary_csv(path: str, fit_result: FitResult, settings) -> None:
     for key, value in settings.isotherm_params.items():
         row[f"isotherm_param_{key}"] = value
 
-    pd.DataFrame([row]).to_csv(path, index=False)
+    return pd.DataFrame([row])
+
+
+def export_fit_summary_workbook(
+    path: str,
+    data: ExperimentalData,
+    fit_result: FitResult,
+    settings,
+    simulation_point_count: int = 100,
+) -> None:
+    """Export fit, measured predictions, and a logarithmic simulation grid."""
+    if not fit_result.success or fit_result.simulation is None:
+        raise ValueError("A successful fit with predictions is required for workbook export")
+    if simulation_point_count < 2:
+        raise ValueError("simulation_point_count must be at least 2")
+    if len(data) == 0:
+        raise ValueError("Experimental data is required for workbook export")
+
+    simulation_times = np.geomspace(
+        float(np.min(data.time_s)),
+        float(np.max(data.time_s)),
+        simulation_point_count,
+    )
+    grid_data = ExperimentalData(
+        time_s=simulation_times,
+        sigma_N_per_m=np.zeros(simulation_point_count),
+    )
+    simulation_settings = replace(
+        settings, diffusion_coefficient_m2_per_s=fit_result.fitted_D_m2_per_s
+    )
+    grid_simulation = simulate(simulation_settings, grid_data)
+    if not grid_simulation.converged:
+        raise ValueError(f"Simulation on the export grid failed: {grid_simulation.message}")
+
+    simulation_frame = pd.DataFrame(
+        {
+            "time_s": grid_simulation.time_s,
+            "sigma_predicted_mN_per_m": N_per_m_to_mN_per_m(
+                grid_simulation.sigma_N_per_m
+            ),
+            "gamma_predicted_mol_per_m2": grid_simulation.gamma_mol_per_m2,
+        }
+    )
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        fit_summary_dataframe(fit_result, settings).to_excel(
+            writer, sheet_name="Fit Summary", index=False
+        )
+        predictions_dataframe(data, fit_result.simulation).to_excel(
+            writer, sheet_name="Predictions", index=False
+        )
+        simulation_frame.to_excel(
+            writer,
+            sheet_name=f"Simulation Dataset (n={simulation_point_count})",
+            index=False,
+        )
