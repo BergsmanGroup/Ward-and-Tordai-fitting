@@ -181,10 +181,14 @@ D = 6.0e-10 m^2/s, 1e-5 M bulk concentration, 23 degC) with added
 Gaussian noise, intended only to demonstrate the workflow. It is not
 real experimental data.
 
-## Known limitations
+## Geometry and known limitations
 
-- Only the planar geometry is supported (no spherical/curved-interface
-  correction, no micelle-breakup/post-CMC model).
+- The default is the planar Ward-Tordai geometry. A fixed-radius spherical
+  diffusion model is also available in the fitting profile. Radius is shown
+  in millimetres and may be enabled as a bounded secondary parameter; D
+  remains the primary fitting parameter.
+- The spherical model does not represent a moving bubble radius, pressure
+  coupling, gas flow, or changing bubble shape.
 - D is always fitted. The supplied isotherm parameters and temperature remain
   fixed; concentration, solvent tension, and effective time offset may be
   enabled as bounded teaching-oriented profile parameters.

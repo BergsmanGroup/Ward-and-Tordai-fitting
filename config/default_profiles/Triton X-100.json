@@ -2,6 +2,7 @@
   "name": "Triton X-100",
   "base_solute": "Triton X-100",
   "isotherm_name": "langmuir",
+  "geometry": "planar",
   "fit": {
     "temperature": false,
     "concentration": false,
@@ -11,6 +12,7 @@
     "gamma_inf_mol_per_m2": false,
     "k": false,
     "p": false
+    ,"radius": false
   },
   "bounds": {
     "D": [-13.0, -7.0],
@@ -22,6 +24,7 @@
     "gamma_inf_umol_per_m2": [1.0, 10.0],
     "k": [-100.0, 100.0],
     "p": [1e-6, 100.0]
+    ,"radius_mm": [0.1, 10.0]
   },
   "n_values": {
     "D": 25,
@@ -33,6 +36,7 @@
     "gamma_inf_mol_per_m2": 9,
     "k": 9,
     "p": 9
+    ,"radius": 9
   },
   "values": {
     "D": 1e-9,
@@ -44,5 +48,6 @@
     "gamma_inf_umol_per_m2": 2.91,
     "k": 0.0,
     "p": 1.0
+    ,"radius_mm": 1.0
   }
 }

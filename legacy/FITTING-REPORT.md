@@ -136,3 +136,14 @@ The existing fitting, solver, isotherm, and GUI tests remain passing. A new
 regression test verifies that the profiled fitter recovers a synthetic
 diffusion coefficient while preserving the D-primary workflow and emitting a
 profile diagnostic.
+## Fixed-radius spherical geometry
+
+The solver now supports a fixed-radius spherical diffusion geometry in addition
+to the default planar Ward-Tordai model. Spherical diffusion is integrated on a
+radial shell grid with a stiff BDF time integrator. Radius is stored internally
+in metres and exposed in fitting profiles in millimetres.
+
+Radius is an optional bounded secondary parameter. When enabled, each radius
+candidate is evaluated with a complete diffusivity profile, preserving
+diffusivity as the primary fit parameter. This implementation does not model
+moving interfaces, pressure coupling, gas flow, or changing bubble shape.

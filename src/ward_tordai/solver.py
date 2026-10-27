@@ -47,6 +47,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
 from .isotherms import IsothermError, build_isotherm
@@ -115,6 +116,9 @@ def solve(settings: FitSettings, time_s: np.ndarray) -> SimulationResult:
         raise ValueError("time_s must be a non-empty 1-D array")
     if np.any(~np.isfinite(time_s)) or np.any(time_s <= 0):
         raise ValueError("time_s must contain only finite, positive values")
+
+    if settings.geometry == "spherical":
+        return _solve_spherical(settings, time_s)
 
     try:
         isotherm = build_isotherm(settings.isotherm_name, settings.isotherm_params)
@@ -247,3 +251,104 @@ def solve(settings: FitSettings, time_s: np.ndarray) -> SimulationResult:
         equilibrium_gamma_mol_per_m2=equilibrium_gamma,
         equilibrium_sigma_N_per_m=equilibrium_sigma,
     )
+
+
+def _solve_spherical(settings: FitSettings, time_s: np.ndarray) -> SimulationResult:
+    """Solve fixed-radius spherical diffusion with a conservative shell grid."""
+    time_s = np.asarray(time_s, dtype=float)
+    if time_s.ndim != 1 or time_s.size == 0:
+        raise ValueError("time_s must be a non-empty 1-D array")
+    if np.any(~np.isfinite(time_s)) or np.any(time_s <= 0):
+        raise ValueError("time_s must contain only finite, positive values")
+    if settings.radius_m is None:
+        raise ValueError("spherical geometry requires radius_m")
+
+    try:
+        isotherm = build_isotherm(settings.isotherm_name, settings.isotherm_params)
+        radius = float(settings.radius_m)
+        t_max = float(np.max(time_s))
+        diffusion_length = math.sqrt(settings.diffusion_coefficient_m2_per_s * t_max)
+        domain_length = max(2.0 * radius, 8.0 * diffusion_length)
+        cell_count = 96
+        faces = radius + np.linspace(0.0, domain_length, cell_count + 1)
+        centers = 0.5 * (faces[:-1] + faces[1:])
+        cell_volumes = (faces[1:] ** 3 - faces[:-1] ** 3) / 3.0
+        widths = np.diff(faces)
+        bulk = settings.bulk_concentration_mol_per_m3
+
+        def rhs(_time: float, state: np.ndarray) -> np.ndarray:
+            excess = state[:-1]
+            gamma = float(state[-1])
+            isotherm.validate_gamma(gamma)
+            surface_excess_concentration = float(isotherm.c_subsurface(gamma) - bulk)
+            gradients = np.empty(cell_count + 1)
+            gradients[0] = (excess[0] - surface_excess_concentration) / (widths[0] / 2.0)
+            gradients[-1] = -excess[-1] / (widths[-1] / 2.0)
+            gradients[1:-1] = (excess[1:] - excess[:-1]) / (
+                centers[1:] - centers[:-1]
+            )
+            radial_flux = settings.diffusion_coefficient_m2_per_s * gradients
+            excess_rate = (
+                faces[1:] ** 2 * radial_flux[1:]
+                - faces[:-1] ** 2 * radial_flux[:-1]
+            ) / cell_volumes
+            gamma_rate = radial_flux[0]
+            return np.concatenate((excess_rate, [gamma_rate]))
+
+        unique_times = np.unique(time_s)
+        integration_times = np.concatenate(([0.0], unique_times))
+        initial_state = np.zeros(cell_count + 1)
+        result = solve_ivp(
+            rhs,
+            (0.0, t_max),
+            initial_state,
+            method="BDF",
+            t_eval=integration_times,
+            rtol=2e-5,
+            atol=np.concatenate((np.full(cell_count, 1e-8), [1e-14])),
+            max_step=max(t_max / 50.0, 1e-8),
+        )
+        if not result.success or result.y.shape[1] != integration_times.size:
+            message = result.message or "spherical integration did not reach all requested times"
+            return SimulationResult(
+                time_s=time_s,
+                gamma_mol_per_m2=np.full_like(time_s, np.nan),
+                sigma_N_per_m=np.full_like(time_s, np.nan),
+                converged=False,
+                message=f"Spherical solve failed: {message}",
+            )
+
+        gamma_by_time = result.y[-1, 1:]
+        lookup = {value: index for index, value in enumerate(unique_times)}
+        gamma_out = np.array([gamma_by_time[lookup[value]] for value in time_s])
+        sigma_out = isotherm.surface_tension(
+            gamma_out, settings.temperature_K, settings.solvent_sigma0_N_per_m
+        )
+        equilibrium_gamma = None
+        equilibrium_sigma = None
+        try:
+            equilibrium_gamma = isotherm.equilibrium_gamma(bulk)
+            equilibrium_sigma = isotherm.surface_tension(
+                equilibrium_gamma,
+                settings.temperature_K,
+                settings.solvent_sigma0_N_per_m,
+            )
+        except IsothermError:
+            pass
+        return SimulationResult(
+            time_s=time_s,
+            gamma_mol_per_m2=gamma_out,
+            sigma_N_per_m=sigma_out,
+            converged=True,
+            message="Converged (fixed-radius spherical geometry)",
+            equilibrium_gamma_mol_per_m2=equilibrium_gamma,
+            equilibrium_sigma_N_per_m=equilibrium_sigma,
+        )
+    except (IsothermError, ValueError, FloatingPointError) as exc:
+        return SimulationResult(
+            time_s=time_s,
+            gamma_mol_per_m2=np.full_like(time_s, np.nan),
+            sigma_N_per_m=np.full_like(time_s, np.nan),
+            converged=False,
+            message=f"Spherical solve failed: {exc}",
+        )

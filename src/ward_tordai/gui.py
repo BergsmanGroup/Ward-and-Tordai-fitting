@@ -364,6 +364,10 @@ class MainWindow(QMainWindow):
         self.isotherm_combo.setCurrentText(ISOTHERM_DISPLAY_NAMES["langmuir"])
         self.isotherm_combo.currentTextChanged.connect(self._on_isotherm_changed)
         selectors.addLayout(self._labeled_control("Isotherm:", self.isotherm_combo))
+        self.geometry_combo = QComboBox()
+        self.geometry_combo.addItems(["Planar", "Spherical (fixed radius)"])
+        self.geometry_combo.currentTextChanged.connect(self._on_geometry_changed)
+        selectors.addLayout(self._labeled_control("Geometry:", self.geometry_combo))
         layout.addLayout(selectors)
 
         self.d_last_used = QLineEdit("1e-9")
@@ -372,11 +376,13 @@ class MainWindow(QMainWindow):
         self.concentration_last_used = QLineEdit("1.0")
         self.sigma0_last_used = QLineEdit("72.5")
         self.time_offset_last_used = QLineEdit("0.0")
+        self.radius_last_used = QLineEdit("1.0")
 
         self.fit_temperature_check = QCheckBox()
         self.fit_concentration_check = QCheckBox()
         self.fit_sigma0_check = QCheckBox()
         self.fit_time_offset_check = QCheckBox()
+        self.fit_radius_check = QCheckBox()
         self.fit_isotherm_checks: dict[str, QCheckBox] = {}
         self.fit_isotherm_lower: dict[str, ScientificDoubleSpinBox] = {}
         self.fit_isotherm_upper: dict[str, ScientificDoubleSpinBox] = {}
@@ -444,11 +450,22 @@ class MainWindow(QMainWindow):
             self.fit_time_offset_lower, self.fit_time_offset_upper,
             self.time_offset_n_values, self.time_offset_last_used
         )
+        self.radius_lower = _spin(0.01, 20.0, 4, 0.1, step=0.1, suffix="mm")
+        self.radius_upper = _spin(0.01, 20.0, 4, 5.0, step=0.1, suffix="mm")
+        self.radius_n_values = QSpinBox()
+        self.radius_n_values.setRange(2, 1000)
+        self.radius_n_values.setValue(9)
+        self._add_parameter_row(
+            table, 6, "Bubble radius (mm)", self.fit_radius_check,
+            self.radius_lower, self.radius_upper, self.radius_n_values,
+            self.radius_last_used
+        )
         for checkbox in (
             self.fit_temperature_check,
             self.fit_concentration_check,
             self.fit_sigma0_check,
             self.fit_time_offset_check,
+            self.fit_radius_check,
         ):
             checkbox.toggled.connect(self._update_fit_parameter_controls)
 
@@ -461,7 +478,7 @@ class MainWindow(QMainWindow):
                 ("k", "k", -100.0, 100.0, 9, 0.0),
                 ("p", "p", 1e-6, 100.0, 9, 1.0),
             ),
-            start=6,
+            start=7,
         ):
             check = QCheckBox()
             spin_low = _spin(low, high, 8, low, step=0.1)
@@ -497,6 +514,30 @@ class MainWindow(QMainWindow):
         save_row.addWidget(save_btn)
         save_row.addWidget(restore_btn)
         layout.addLayout(save_row)
+        editable_controls = [
+            self.d_last_used, self.temperature_last_used, self.concentration_last_used,
+            self.sigma0_last_used, self.time_offset_last_used, self.radius_last_used,
+            self.d_lower_exp, self.d_upper_exp, self.d_n_values,
+            self.temperature_lower, self.temperature_upper, self.temperature_n_values,
+            self.fit_concentration_lower, self.fit_concentration_upper, self.concentration_n_values,
+            self.fit_sigma0_lower, self.fit_sigma0_upper, self.sigma0_n_values,
+            self.fit_time_offset_lower, self.fit_time_offset_upper, self.time_offset_n_values,
+            self.radius_lower, self.radius_upper, self.radius_n_values,
+            *self.fit_isotherm_lower.values(), *self.fit_isotherm_upper.values(),
+            *self.fit_isotherm_n.values(), *self.fit_isotherm_value.values(),
+        ]
+        for control in editable_controls:
+            signal = getattr(control, "textChanged", None) or getattr(control, "valueChanged", None)
+            if signal is not None:
+                signal.connect(self._on_profile_edited)
+        for control in (
+            self.fit_temperature_check, self.fit_concentration_check,
+            self.fit_sigma0_check, self.fit_time_offset_check, self.fit_radius_check,
+            *self.fit_isotherm_checks.values(),
+        ):
+            control.toggled.connect(self._on_profile_edited)
+        self.isotherm_combo.currentTextChanged.connect(self._on_profile_edited)
+        self.geometry_combo.currentTextChanged.connect(self._on_profile_edited)
         return box
 
     def _add_parameter_row(
@@ -541,6 +582,10 @@ class MainWindow(QMainWindow):
             return
         self._profile_edit_guard = True
         self._base_solute_name = profile.get("base_solute", name)
+        geometry = profile.get("geometry", "planar")
+        self.geometry_combo.setCurrentText(
+            "Spherical (fixed radius)" if geometry == "spherical" else "Planar"
+        )
         self.isotherm_combo.setCurrentText(
             ISOTHERM_DISPLAY_NAMES.get(profile.get("isotherm_name", "langmuir"), "Langmuir")
         )
@@ -550,6 +595,7 @@ class MainWindow(QMainWindow):
         self.concentration_last_used.setText(f"{values['concentration_mM']:.6g}")
         self.sigma0_last_used.setText(f"{values['solvent_sigma0_mN_per_m']:.6g}")
         self.time_offset_last_used.setText(f"{values['time_offset_s']:.1f}")
+        self.radius_last_used.setText(f"{values.get('radius_mm', 1.0):.6g}")
         for name, field in self.fit_isotherm_value.items():
             field.setValue(values.get({
                 "a_mol_per_m3": "a_M",
@@ -566,6 +612,8 @@ class MainWindow(QMainWindow):
         self.fit_sigma0_upper.setValue(bounds["solvent_sigma0_mN_per_m"][1])
         self.fit_time_offset_lower.setValue(bounds["time_offset_s"][0])
         self.fit_time_offset_upper.setValue(bounds["time_offset_s"][1])
+        self.radius_lower.setValue(bounds.get("radius_mm", [0.1, 5.0])[0])
+        self.radius_upper.setValue(bounds.get("radius_mm", [0.1, 5.0])[1])
         for name, field in self.fit_isotherm_lower.items():
             key = {"a_mol_per_m3": "a_M", "gamma_inf_mol_per_m2": "gamma_inf_umol_per_m2"}.get(name, name)
             field.setValue(bounds[key][0])
@@ -576,9 +624,18 @@ class MainWindow(QMainWindow):
         self.fit_concentration_check.setChecked(profile["fit"].get("concentration", False))
         self.fit_sigma0_check.setChecked(profile["fit"].get("solvent_sigma0", False))
         self.fit_time_offset_check.setChecked(profile["fit"].get("time_offset", False))
+        self.fit_radius_check.setChecked(profile.get("fit", {}).get("radius", False))
+        self.radius_n_values.setValue(profile.get("n_values", {}).get("radius", 9))
         for name, checkbox in self.fit_isotherm_checks.items():
             checkbox.setChecked(profile["fit"].get(name, False))
         self._profile_edit_guard = False
+        self._update_fit_parameter_controls()
+
+    def _on_geometry_changed(self, _text: str) -> None:
+        spherical = self._current_geometry_name() == "spherical"
+        self.fit_radius_check.setEnabled(spherical)
+        if not spherical:
+            self.fit_radius_check.setChecked(False)
         self._update_fit_parameter_controls()
 
     def _on_profile_edited(self, *_args) -> None:
@@ -631,6 +688,7 @@ class MainWindow(QMainWindow):
             "gamma_inf_umol_per_m2": self.fit_isotherm_value["gamma_inf_mol_per_m2"].value(),
             "k": self.fit_isotherm_value["k"].value(),
             "p": self.fit_isotherm_value["p"].value(),
+            "radius_mm": self._read_last_used(self.radius_last_used, "radius"),
         }
         bounds = {
             "D": [self.d_lower_exp.value(), self.d_upper_exp.value()],
@@ -638,6 +696,7 @@ class MainWindow(QMainWindow):
             "concentration_mM": [self.fit_concentration_lower.value(), self.fit_concentration_upper.value()],
             "solvent_sigma0_mN_per_m": [self.fit_sigma0_lower.value(), self.fit_sigma0_upper.value()],
             "time_offset_s": [self.fit_time_offset_lower.value(), self.fit_time_offset_upper.value()],
+            "radius_mm": [self.radius_lower.value(), self.radius_upper.value()],
         }
         n_values = {
             "D": self.d_n_values.value(),
@@ -645,12 +704,14 @@ class MainWindow(QMainWindow):
             "concentration": self.concentration_n_values.value(),
             "solvent_sigma0": self.sigma0_n_values.value(),
             "time_offset": self.time_offset_n_values.value(),
+            "radius": self.radius_n_values.value(),
         }
         fit = {
             "temperature": self.fit_temperature_check.isChecked(),
             "concentration": self.fit_concentration_check.isChecked(),
             "solvent_sigma0": self.fit_sigma0_check.isChecked(),
             "time_offset": self.fit_time_offset_check.isChecked(),
+            "radius": self.fit_radius_check.isChecked(),
         }
         for name in self.fit_isotherm_value:
             key = {"a_mol_per_m3": "a_M", "gamma_inf_mol_per_m2": "gamma_inf_umol_per_m2"}.get(name, name)
@@ -661,6 +722,7 @@ class MainWindow(QMainWindow):
         return {
             "base_solute": self._base_solute_name,
             "isotherm_name": self._current_isotherm_name(),
+            "geometry": self._current_geometry_name(),
             "fit": fit,
             "bounds": bounds,
             "n_values": n_values,
@@ -900,6 +962,7 @@ class MainWindow(QMainWindow):
             (self.fit_concentration_check, self.fit_concentration_lower, self.fit_concentration_upper, self.concentration_n_values, self.concentration_last_used),
             (self.fit_sigma0_check, self.fit_sigma0_lower, self.fit_sigma0_upper, self.sigma0_n_values, self.sigma0_last_used),
             (self.fit_time_offset_check, self.fit_time_offset_lower, self.fit_time_offset_upper, self.time_offset_n_values, self.time_offset_last_used),
+            (self.fit_radius_check, self.radius_lower, self.radius_upper, self.radius_n_values, self.radius_last_used),
         )
         for checkbox, lower, upper, n_values, last_used in controls:
             enabled = checkbox.isChecked()
@@ -916,6 +979,13 @@ class MainWindow(QMainWindow):
             self.fit_isotherm_value[name].setReadOnly(enabled)
             self.fit_isotherm_value[name].setEnabled(True)
         self.d_n_values.setEnabled(True)
+        spherical = self._current_geometry_name() == "spherical"
+        self.fit_radius_check.setEnabled(spherical)
+        if not spherical:
+            self.radius_lower.setEnabled(False)
+            self.radius_upper.setEnabled(False)
+            self.radius_n_values.setEnabled(False)
+            self.radius_last_used.setReadOnly(False)
         self._update_permutation_count()
 
     def _update_permutation_count(self) -> None:
@@ -941,6 +1011,8 @@ class MainWindow(QMainWindow):
             for checkbox in (self.fit_time_offset_check,)
             if checkbox.isChecked()
         ]
+        if self._current_geometry_name() == "spherical" and self.fit_radius_check.isChecked():
+            optional_counts.append(self.radius_n_values.value())
         optional_counts += [
             self.fit_isotherm_n[name].value()
             for name, checkbox in self.fit_isotherm_checks.items()
@@ -1017,6 +1089,13 @@ class MainWindow(QMainWindow):
     def _current_isotherm_name(self) -> str:
         return {v: k for k, v in ISOTHERM_DISPLAY_NAMES.items()}[self.isotherm_combo.currentText()]
 
+    def _current_geometry_name(self) -> str:
+        return (
+            "spherical"
+            if self.geometry_combo.currentText() == "Spherical (fixed radius)"
+            else "planar"
+        )
+
     def _build_isotherm_params(self) -> dict:
         name = self._current_isotherm_name()
         a_mol_per_m3 = self.fit_isotherm_value["a_mol_per_m3"].value() * 1000.0
@@ -1055,6 +1134,8 @@ class MainWindow(QMainWindow):
                 TensionUnit.MILLINEWTON_PER_METER,
             ),
             diffusion_coefficient_m2_per_s=self._read_last_used(self.d_last_used, "D"),
+            geometry=self._current_geometry_name(),
+            radius_m=self._read_last_used(self.radius_last_used, "radius") / 1000.0,
         )
 
     def _on_load_csv(self) -> None:
@@ -1225,6 +1306,15 @@ class MainWindow(QMainWindow):
                     self.fit_time_offset_upper.value(),
                 ),
                 initial_time_offset_s=fixed_time_offset,
+                fit_radius=(
+                    self._current_geometry_name() == "spherical"
+                    and self.fit_radius_check.isChecked()
+                ),
+                radius_bounds_m=(
+                    self.radius_lower.value() / 1000.0,
+                    self.radius_upper.value() / 1000.0,
+                ),
+                initial_radius_m=self._read_last_used(self.radius_last_used, "radius") / 1000.0,
                 fit_isotherm_params=isotherm_bounds,
                 d_n_values=self.d_n_values.value(),
                 n_values={
@@ -1233,6 +1323,7 @@ class MainWindow(QMainWindow):
                     "temperature_K": self.temperature_n_values.value(),
                     "time_offset_s": self.time_offset_n_values.value(),
                     **isotherm_counts,
+                    "radius_m": self.radius_n_values.value(),
                 },
                 progress_callback=self._update_fit_progress,
                 log10_D_bounds=bounds,
@@ -1262,6 +1353,8 @@ class MainWindow(QMainWindow):
             self.concentration_last_used.setText(
                 f"{fitted['bulk_concentration_mol_per_m3']:.6g}"
             )
+            if "radius_m" in fitted:
+                self.radius_last_used.setText(f"{fitted['radius_m'] * 1000.0:.6g}")
             self.sigma0_last_used.setText(
                 f"{fitted['solvent_sigma0_N_per_m'] * 1000.0:.6g}"
             )

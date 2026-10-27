@@ -169,6 +169,7 @@ def _fit_with_optional_inputs(
     solvent_sigma0_N_per_m: float,
     temperature_K: float,
     time_offset_s: float,
+    radius_m: float | None,
     isotherm_params: Mapping[str, float],
     d_n_values: int,
     progress_callback: Callable[[int, int], None] | None,
@@ -191,6 +192,7 @@ def _fit_with_optional_inputs(
         bulk_concentration_mol_per_m3=bulk_concentration_mol_per_m3,
         solvent_sigma0_N_per_m=solvent_sigma0_N_per_m,
         temperature_K=temperature_K,
+        radius_m=radius_m,
         isotherm_params=dict(isotherm_params),
     )
     shifted_data = ExperimentalData(shifted_times, data.sigma_N_per_m)
@@ -228,6 +230,9 @@ def fit_profiled_parameters(
     fit_time_offset: bool = False,
     time_offset_bounds_s: tuple[float, float] = (-2.0, 2.0),
     initial_time_offset_s: float = 0.0,
+    fit_radius: bool = False,
+    radius_bounds_m: tuple[float, float] = (1e-4, 5e-3),
+    initial_radius_m: float | None = None,
     fit_isotherm_params: Mapping[str, tuple[float, float]] | None = None,
     fixed_isotherm_params: Mapping[str, float] | None = None,
     d_n_values: int = 25,
@@ -253,6 +258,10 @@ def fit_profiled_parameters(
         ranges["temperature_K"] = temperature_bounds_K
     if fit_time_offset:
         ranges["time_offset_s"] = time_offset_bounds_s
+    if fit_radius:
+        if settings.geometry != "spherical":
+            raise ValueError("Radius can only be fitted with spherical geometry")
+        ranges["radius_m"] = radius_bounds_m
     for name, bounds in (fit_isotherm_params or {}).items():
         ranges[f"isotherm_param:{name}"] = bounds
     counts = {name: 9 for name in ranges}
@@ -276,6 +285,11 @@ def fit_profiled_parameters(
             fixed_temperature_K if fixed_temperature_K is not None else settings.temperature_K
         ),
         "time_offset_s": initial_time_offset_s,
+        "radius_m": (
+            initial_radius_m
+            if initial_radius_m is not None
+            else settings.radius_m
+        ),
     }
     isotherm_current = dict(settings.isotherm_params)
     isotherm_current.update(fixed_isotherm_params or {})
@@ -287,6 +301,12 @@ def fit_profiled_parameters(
         raise ValueError("initial_time_offset_s must be finite and within time_offset_bounds_s")
     if not np.isfinite(current["temperature_K"]) or current["temperature_K"] <= 0:
         raise ValueError("fixed_temperature_K must be finite and positive")
+    if settings.geometry == "spherical" and (
+        current["radius_m"] is None
+        or not np.isfinite(current["radius_m"])
+        or current["radius_m"] <= 0
+    ):
+        raise ValueError("radius_m must be finite and positive for spherical fitting")
 
     outer_evaluation_count = 1 + sum(3 * count + 2 for count in counts.values())
     progress_completed = 0
@@ -306,6 +326,7 @@ def fit_profiled_parameters(
             solvent_sigma0_N_per_m=candidate["solvent_sigma0_N_per_m"],
             temperature_K=candidate["temperature_K"],
             time_offset_s=candidate["time_offset_s"],
+            radius_m=candidate["radius_m"],
             isotherm_params={
                 **isotherm_current,
                 **{
@@ -372,6 +393,7 @@ def fit_profiled_parameters(
         "solvent_sigma0_N_per_m": current["solvent_sigma0_N_per_m"],
         "temperature_K": current["temperature_K"],
         "time_offset_s": current["time_offset_s"],
+        "radius_m": current["radius_m"],
     }
     fitted_parameters.update(
         {

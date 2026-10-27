@@ -56,6 +56,8 @@ class FitSettings:
     temperature_K: float
     solvent_sigma0_N_per_m: float
     diffusion_coefficient_m2_per_s: float
+    geometry: str = "planar"
+    radius_m: float | None = None
 
     def __post_init__(self) -> None:
         if self.bulk_concentration_mol_per_m3 <= 0:
@@ -64,6 +66,12 @@ class FitSettings:
             raise ValueError("temperature_K must be positive")
         if self.diffusion_coefficient_m2_per_s <= 0:
             raise ValueError("diffusion_coefficient_m2_per_s must be positive")
+        if self.geometry not in {"planar", "spherical"}:
+            raise ValueError("geometry must be 'planar' or 'spherical'")
+        if self.geometry == "spherical" and (
+            self.radius_m is None or not np.isfinite(self.radius_m) or self.radius_m <= 0
+        ):
+            raise ValueError("spherical geometry requires a finite positive radius_m")
 
 
 @dataclass
