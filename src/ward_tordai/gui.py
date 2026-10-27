@@ -7,12 +7,9 @@ they only gather UI state into dataclasses and delegate to
 from __future__ import annotations
 
 import dataclasses
-import copy
 import sys
-from pathlib import Path
 from typing import Optional
 
-import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt
@@ -22,7 +19,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -38,8 +34,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
     QSplitter,
     QToolButton,
     QTabWidget,
@@ -48,15 +42,12 @@ from PySide6.QtWidgets import (
 )
 
 from .config import (
-    BUILTIN_PROFILE_NAMES,
-    DEFAULT_PROFILE_NAME,
+    DEFAULT_CONFIG_PATH,
     ParameterConfigError,
-    builtin_fitting_profiles,
-    custom_profile_directory,
-    load_custom_fitting_profiles,
-    save_custom_fitting_profile,
-    save_default_fitting_profile,
-    safe_profile_filename,
+    ensure_live_config,
+    load_parameter_sets,
+    restore_default_config,
+    save_parameter_set,
 )
 from .fitting import fit_profiled_parameters, simulate
 from .io import (
@@ -141,10 +132,7 @@ class ScientificDoubleSpinBox(QDoubleSpinBox):
             return self.value()
 
     def textFromValue(self, value: float) -> str:
-        digits = getattr(self, "_display_significant_digits", 6)
-        if getattr(self, "_display_scientific", False):
-            return f"{value:.{digits - 1}e}"
-        return f"{value:.{digits}g}"
+        return f"{value:.6g}"
 
     def stepBy(self, steps: int) -> None:
         if self._use_additive_step:
@@ -168,120 +156,6 @@ def _spin(minimum, maximum, decimals, value, step=None, suffix=""):
     return box
 
 
-class DefaultProfileEditorDialog(QDialog):
-    """Edit one bundled default profile using the Step 2 parameter layout."""
-
-    _rows = (
-        ("D", "D (log10)", "D", "D", "D", "D"),
-        ("temperature_C", "Temperature (degC)", "temperature_C", "temperature_C", "temperature", "temperature"),
-        ("concentration_mM", "Concentration (mM)", "concentration_mM", "concentration_mM", "concentration", "concentration"),
-        ("solvent_sigma0_mN_per_m", "Solvent sigma0 (mN/m)", "solvent_sigma0_mN_per_m", "solvent_sigma0_mN_per_m", "solvent_sigma0", "solvent_sigma0"),
-        ("time_offset_s", "Time offset (s)", "time_offset_s", "time_offset_s", "time_offset", "time_offset"),
-        ("radius_mm", "Bubble radius (mm)", "radius_mm", "radius_mm", "radius", "radius"),
-        ("a_M", "a (M)", "a_M", "a_M", "a_mol_per_m3", "a_mol_per_m3"),
-        ("gamma_inf_umol_per_m2", "Gamma_inf (umol/m2)", "gamma_inf_umol_per_m2", "gamma_inf_umol_per_m2", "gamma_inf_mol_per_m2", "gamma_inf_mol_per_m2"),
-        ("k", "k", "k", "k", "k", "k"),
-        ("p", "p", "p", "p", "p", "p"),
-    )
-
-    def __init__(self, name: str, profile: dict, parent=None):
-        super().__init__(parent)
-        self.profile_name = name
-        self.profile = copy.deepcopy(profile)
-        self.setWindowTitle(f"Edit default profile: {name}")
-        self.resize(900, 520)
-        layout = QVBoxLayout(self)
-        selectors = QHBoxLayout()
-        self.isotherm_combo = QComboBox()
-        self.isotherm_combo.addItems(list(ISOTHERM_DISPLAY_NAMES.values()))
-        self.isotherm_combo.setCurrentText(
-            ISOTHERM_DISPLAY_NAMES.get(self.profile.get("isotherm_name", "langmuir"), "Langmuir")
-        )
-        self.geometry_combo = QComboBox()
-        self.geometry_combo.addItems(["Planar", "Spherical (fixed radius)"])
-        self.geometry_combo.setCurrentText(
-            "Spherical (fixed radius)" if self.profile.get("geometry") == "spherical" else "Planar"
-        )
-        selectors.addWidget(QLabel("Isotherm:"))
-        selectors.addWidget(self.isotherm_combo)
-        selectors.addWidget(QLabel("Geometry:"))
-        selectors.addWidget(self.geometry_combo)
-        layout.addLayout(selectors)
-
-        self.table = QTableWidget(len(self._rows), 6)
-        self.table.setHorizontalHeaderLabels(("Parameter", "Fit", "Lower bound", "Upper bound", "N values", "Value"))
-        self.table.verticalHeader().setVisible(False)
-        self.controls: dict[str, tuple[QCheckBox, QLineEdit, QLineEdit, QSpinBox, QLineEdit]] = {}
-        for row, (key, label, bound_low, bound_high, n_key, fit_key) in enumerate(self._rows):
-            self.table.setItem(row, 0, QTableWidgetItem(label))
-            fit = QCheckBox()
-            lower = QLineEdit(self._format(self.profile["bounds"].get(bound_low, [0, 0])[0], key))
-            upper = QLineEdit(self._format(self.profile["bounds"].get(bound_high, [0, 0])[1], key))
-            count = QSpinBox()
-            count.setRange(2, 1000)
-            count.setValue(int(self.profile["n_values"].get(n_key, 9)))
-            value = QLineEdit(self._format(self.profile["values"].get(key, 0), key))
-            fit.setChecked(bool(self.profile.get("fit", {}).get(fit_key, False)))
-            for column, widget in enumerate((fit, lower, upper, count, value), start=1):
-                self.table.setCellWidget(row, column, widget)
-            self.controls[key] = (fit, lower, upper, count, value)
-        layout.addWidget(self.table)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.isotherm_combo.currentTextChanged.connect(self._update_visibility)
-        self.geometry_combo.currentTextChanged.connect(self._update_visibility)
-        self._update_visibility()
-
-    @staticmethod
-    def _format(value: float, key: str) -> str:
-        if key == "a_M":
-            return f"{value:.3e}"
-        return f"{value:.4g}"
-
-    def _update_visibility(self) -> None:
-        name = {v: k for k, v in ISOTHERM_DISPLAY_NAMES.items()}[self.isotherm_combo.currentText()]
-        visible = {
-            "D": True, "temperature_C": True, "concentration_mM": True,
-            "solvent_sigma0_mN_per_m": True, "time_offset_s": True,
-            "radius_mm": self.geometry_combo.currentText() == "Spherical (fixed radius)",
-            "a_M": True, "gamma_inf_umol_per_m2": name != "henry",
-            "k": name in ("frumkin", "generalized_frumkin"), "p": name == "generalized_frumkin",
-        }
-        for row, (key, *_rest) in enumerate(self._rows):
-            self.table.setRowHidden(row, not visible[key])
-
-    def _save(self) -> None:
-        answer = QMessageBox.warning(
-            self,
-            "Overwrite default profile?",
-            f"This will overwrite the bundled default profile for {self.profile_name}. Continue?",
-            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Save:
-            return
-        try:
-            values = self.profile["values"]
-            bounds = self.profile["bounds"]
-            n_values = self.profile["n_values"]
-            fit = self.profile["fit"]
-            for key, (fit_box, lower, upper, count, value) in self.controls.items():
-                values[key] = float(value.text())
-                bounds_key = key
-                bounds[bounds_key] = [float(lower.text()), float(upper.text())]
-                n_values[{"D": "D", "a_M": "a_mol_per_m3", "gamma_inf_umol_per_m2": "gamma_inf_mol_per_m2"}.get(key, key)] = count.value()
-                fit[{"a_M": "a_mol_per_m3", "gamma_inf_umol_per_m2": "gamma_inf_mol_per_m2"}.get(key, key)] = fit_box.isChecked()
-            self.profile["isotherm_name"] = {v: k for k, v in ISOTHERM_DISPLAY_NAMES.items()}[self.isotherm_combo.currentText()]
-            self.profile["geometry"] = "spherical" if self.geometry_combo.currentText() == "Spherical (fixed radius)" else "planar"
-            save_default_fitting_profile(self.profile_name, self.profile)
-        except (ValueError, KeyError, ParameterConfigError) as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
-            return
-        self.accept()
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -290,15 +164,7 @@ class MainWindow(QMainWindow):
 
         self.data: Optional[ExperimentalData] = None
         self.last_fit = None
-        self.profile_folder = custom_profile_directory()
-        self.fitting_profiles = builtin_fitting_profiles()
-        self.fitting_profiles.update(load_custom_fitting_profiles(self.profile_folder))
-        self.parameter_sets = {
-            name: profile["values"]
-            for name, profile in self.fitting_profiles.items()
-        }
-        self._profile_edit_guard = False
-        self._base_solute_name = "HTAB"
+        self.parameter_sets = ensure_live_config()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(splitter)
@@ -323,7 +189,6 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setSizes([600, 850])
 
-        self.fitting_profile_combo.setCurrentText(DEFAULT_PROFILE_NAME)
         self._redraw_plot()
 
     # ------------------------------------------------------------------
@@ -355,11 +220,8 @@ class MainWindow(QMainWindow):
         load_csv_btn.clicked.connect(self._on_load_csv)
         use_pasted_btn = QPushButton("Use pasted data")
         use_pasted_btn.clicked.connect(self._on_use_pasted)
-        use_example_btn = QPushButton("Use example data")
-        use_example_btn.clicked.connect(self._on_use_example_data)
         btn_row.addWidget(load_csv_btn)
         btn_row.addWidget(use_pasted_btn)
-        btn_row.addWidget(use_example_btn)
         layout.addLayout(btn_row)
 
         self.data_status_label = QLabel("No data loaded.")
@@ -436,80 +298,39 @@ class MainWindow(QMainWindow):
         save_btn.clicked.connect(self._on_save_parameters)
         restore_btn = QPushButton("Restore defaults")
         restore_btn.clicked.connect(self._on_restore_defaults)
-        edit_defaults_btn = QPushButton("Edit default profiles...")
-        edit_defaults_btn.clicked.connect(self._on_edit_default_profiles)
         save_row.addWidget(save_btn)
         save_row.addWidget(restore_btn)
-        save_row.addWidget(edit_defaults_btn)
         layout.addLayout(save_row)
-        self._on_profile_changed(self.fitting_profile_combo.currentText())
-        editable_controls = [
-            self.d_last_used, self.temperature_last_used, self.concentration_last_used,
-            self.sigma0_last_used, self.time_offset_last_used,
-            self.d_lower_exp, self.d_upper_exp, self.d_n_values,
-            self.temperature_lower, self.temperature_upper, self.temperature_n_values,
-            self.fit_concentration_lower, self.fit_concentration_upper, self.concentration_n_values,
-            self.fit_sigma0_lower, self.fit_sigma0_upper, self.sigma0_n_values,
-            self.fit_time_offset_lower, self.fit_time_offset_upper, self.time_offset_n_values,
-            *self.fit_isotherm_lower.values(), *self.fit_isotherm_upper.values(),
-            *self.fit_isotherm_n.values(), *self.fit_isotherm_value.values(),
-        ]
-        for control in editable_controls:
-            signal = getattr(control, "textChanged", None) or getattr(control, "valueChanged", None)
-            if signal is not None:
-                signal.connect(self._on_profile_edited)
-        for control in (
-            self.fit_temperature_check, self.fit_concentration_check,
-            self.fit_sigma0_check, self.fit_time_offset_check,
-            *self.fit_isotherm_checks.values(),
-        ):
-            control.toggled.connect(self._on_profile_edited)
-        self.isotherm_combo.currentTextChanged.connect(self._on_profile_edited)
         return box
 
     def _build_solution_group(self) -> QGroupBox:
-        box = QGroupBox("2. Fitting profile")
+        box = QGroupBox("2. Fitting parameters for a given Isotherm and Solute")
         layout = QVBoxLayout(box)
 
         selectors = QHBoxLayout()
-        self.fitting_profile_combo = QComboBox()
-        self.fitting_profile_combo.addItems(sorted(self.fitting_profiles))
-        self.fitting_profile_combo.currentTextChanged.connect(self._on_profile_changed)
-        self.solute_combo = self.fitting_profile_combo
-        profile_control = QWidget()
-        profile_layout = QHBoxLayout(profile_control)
-        profile_layout.setContentsMargins(0, 0, 0, 0)
-        profile_layout.addWidget(self.fitting_profile_combo)
-        refresh_profiles_btn = QPushButton("Refresh")
-        refresh_profiles_btn.clicked.connect(self._reload_profiles)
-        profile_layout.addWidget(refresh_profiles_btn)
-        selectors.addLayout(self._labeled_control("Fitting profile:", profile_control))
-        self.permutation_count_label = QLabel()
-        selectors.addWidget(self.permutation_count_label)
+        self.solute_combo = QComboBox()
+        self.solute_combo.addItem("Custom")
+        self.solute_combo.addItems(sorted(self.parameter_sets))
+        self.solute_combo.currentTextChanged.connect(self._on_solute_changed)
+        selectors.addLayout(self._labeled_control("Solute:", self.solute_combo))
         self.isotherm_combo = QComboBox()
         self.isotherm_combo.addItems(list(ISOTHERM_DISPLAY_NAMES.values()))
-        self.isotherm_combo.setCurrentText(ISOTHERM_DISPLAY_NAMES["langmuir"])
         self.isotherm_combo.currentTextChanged.connect(self._on_isotherm_changed)
         selectors.addLayout(self._labeled_control("Isotherm:", self.isotherm_combo))
-        self.geometry_combo = QComboBox()
-        self.geometry_combo.addItems(["Planar", "Spherical (fixed radius)"])
-        self.geometry_combo.currentTextChanged.connect(self._on_geometry_changed)
-        selectors.addLayout(self._labeled_control("Geometry:", self.geometry_combo))
         layout.addLayout(selectors)
 
+        self.sigma0_value = _spin(1.0, 200.0, 3, 72.5, step=0.1, suffix="mN/m")
         self.d_last_used = QLineEdit("1e-9")
         self.d_last_used.setReadOnly(True)
         self.temperature_last_used = QLineEdit("23.0")
         self.concentration_last_used = QLineEdit("1.0")
         self.sigma0_last_used = QLineEdit("72.5")
         self.time_offset_last_used = QLineEdit("0.0")
-        self.radius_last_used = QLineEdit("1.0")
 
         self.fit_temperature_check = QCheckBox()
         self.fit_concentration_check = QCheckBox()
         self.fit_sigma0_check = QCheckBox()
         self.fit_time_offset_check = QCheckBox()
-        self.fit_radius_check = QCheckBox()
         self.fit_isotherm_checks: dict[str, QCheckBox] = {}
         self.fit_isotherm_lower: dict[str, ScientificDoubleSpinBox] = {}
         self.fit_isotherm_upper: dict[str, ScientificDoubleSpinBox] = {}
@@ -577,35 +398,17 @@ class MainWindow(QMainWindow):
             self.fit_time_offset_lower, self.fit_time_offset_upper,
             self.time_offset_n_values, self.time_offset_last_used
         )
-        self.radius_lower = _spin(0.01, 20.0, 4, 0.1, step=0.1, suffix="mm")
-        self.radius_upper = _spin(0.01, 20.0, 4, 5.0, step=0.1, suffix="mm")
-        self.radius_n_values = QSpinBox()
-        self.radius_n_values.setRange(2, 1000)
-        self.radius_n_values.setValue(9)
-        self._add_parameter_row(
-            table, 6, "Bubble radius (mm)", self.fit_radius_check,
-            self.radius_lower, self.radius_upper, self.radius_n_values,
-            self.radius_last_used
-        )
-        for checkbox in (
-            self.fit_temperature_check,
-            self.fit_concentration_check,
-            self.fit_sigma0_check,
-            self.fit_time_offset_check,
-            self.fit_radius_check,
-        ):
-            checkbox.toggled.connect(self._update_fit_parameter_controls)
 
         self._isotherm_table = table
         self._isotherm_rows: dict[str, list[QWidget]] = {}
         for row, (name, label, low, high, n, value) in enumerate(
             (
-                ("a_mol_per_m3", "a (M)", 1e-6, 1e-3, 9, 6.62e-6),
+                ("a_mol_per_m3", "a (M)", 1e-3, 1.0, 9, 6.62e-3),
                 ("gamma_inf_mol_per_m2", "Gamma_inf (umol/m2)", 1.0, 10.0, 9, 2.91),
                 ("k", "k", -100.0, 100.0, 9, 0.0),
                 ("p", "p", 1e-6, 100.0, 9, 1.0),
             ),
-            start=7,
+            start=6,
         ):
             check = QCheckBox()
             spin_low = _spin(low, high, 8, low, step=0.1)
@@ -614,9 +417,6 @@ class MainWindow(QMainWindow):
             n_box.setRange(2, 1000)
             n_box.setValue(n)
             value_box = _spin(low, high, 8, value, step=0.1)
-            value_box._display_significant_digits = 4
-            if name == "a_mol_per_m3":
-                value_box._display_scientific = True
             self.fit_isotherm_checks[name] = check
             self.fit_isotherm_lower[name] = spin_low
             self.fit_isotherm_upper[name] = spin_high
@@ -632,45 +432,14 @@ class MainWindow(QMainWindow):
         self._on_isotherm_changed(self.isotherm_combo.currentText())
         self._update_fit_parameter_controls()
 
-        simulate_btn = QPushButton("Simulate exact Value column")
-        simulate_btn.clicked.connect(self._on_simulate)
-        layout.addWidget(simulate_btn)
-
         save_row = QHBoxLayout()
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._on_save_parameters)
         restore_btn = QPushButton("Restore defaults")
         restore_btn.clicked.connect(self._on_restore_defaults)
-        edit_defaults_btn = QPushButton("Edit default profiles...")
-        edit_defaults_btn.clicked.connect(self._on_edit_default_profiles)
         save_row.addWidget(save_btn)
         save_row.addWidget(restore_btn)
-        save_row.addWidget(edit_defaults_btn)
         layout.addLayout(save_row)
-        editable_controls = [
-            self.d_last_used, self.temperature_last_used, self.concentration_last_used,
-            self.sigma0_last_used, self.time_offset_last_used, self.radius_last_used,
-            self.d_lower_exp, self.d_upper_exp, self.d_n_values,
-            self.temperature_lower, self.temperature_upper, self.temperature_n_values,
-            self.fit_concentration_lower, self.fit_concentration_upper, self.concentration_n_values,
-            self.fit_sigma0_lower, self.fit_sigma0_upper, self.sigma0_n_values,
-            self.fit_time_offset_lower, self.fit_time_offset_upper, self.time_offset_n_values,
-            self.radius_lower, self.radius_upper, self.radius_n_values,
-            *self.fit_isotherm_lower.values(), *self.fit_isotherm_upper.values(),
-            *self.fit_isotherm_n.values(), *self.fit_isotherm_value.values(),
-        ]
-        for control in editable_controls:
-            signal = getattr(control, "textChanged", None) or getattr(control, "valueChanged", None)
-            if signal is not None:
-                signal.connect(self._on_profile_edited)
-        for control in (
-            self.fit_temperature_check, self.fit_concentration_check,
-            self.fit_sigma0_check, self.fit_time_offset_check, self.fit_radius_check,
-            *self.fit_isotherm_checks.values(),
-        ):
-            control.toggled.connect(self._on_profile_edited)
-        self.isotherm_combo.currentTextChanged.connect(self._on_profile_edited)
-        self.geometry_combo.currentTextChanged.connect(self._on_profile_edited)
         return box
 
     def _add_parameter_row(
@@ -702,106 +471,17 @@ class MainWindow(QMainWindow):
         return
 
     def _refresh_solute_choices(self, selected: Optional[str] = None) -> None:
-        self.fitting_profile_combo.blockSignals(True)
-        self.fitting_profile_combo.clear()
-        self.fitting_profile_combo.addItems(sorted(self.fitting_profiles))
+        self.solute_combo.blockSignals(True)
+        self.solute_combo.clear()
+        self.solute_combo.addItem("Custom")
+        self.solute_combo.addItems(sorted(self.parameter_sets))
         if selected:
-            self.fitting_profile_combo.setCurrentText(selected)
-        self.fitting_profile_combo.blockSignals(False)
-
-    def _on_profile_changed(self, name: str) -> None:
-        profile = self.fitting_profiles.get(name)
-        if profile is None:
-            return
-        self._profile_edit_guard = True
-        self._base_solute_name = profile.get("base_solute", name)
-        geometry = profile.get("geometry", "planar")
-        self.geometry_combo.setCurrentText(
-            "Spherical (fixed radius)" if geometry == "spherical" else "Planar"
-        )
-        self.isotherm_combo.setCurrentText(
-            ISOTHERM_DISPLAY_NAMES.get(profile.get("isotherm_name", "langmuir"), "Langmuir")
-        )
-        values = profile["values"]
-        self.d_last_used.setText(f"{values['D']:.4g}")
-        self.temperature_last_used.setText(f"{values['temperature_C']:.4g}")
-        self.concentration_last_used.setText(f"{values['concentration_mM']:.4g}")
-        self.sigma0_last_used.setText(f"{values['solvent_sigma0_mN_per_m']:.4g}")
-        self.time_offset_last_used.setText(
-            "0.0" if values["time_offset_s"] == 0 else f"{values['time_offset_s']:.4g}"
-        )
-        self.radius_last_used.setText(f"{values.get('radius_mm', 1.0):.4g}")
-        for name, field in self.fit_isotherm_value.items():
-            field.setValue(values.get({
-                "a_mol_per_m3": "a_M",
-                "gamma_inf_mol_per_m2": "gamma_inf_umol_per_m2",
-            }.get(name, name), field.value()))
-        bounds = profile["bounds"]
-        self.d_lower_exp.setValue(bounds["D"][0])
-        self.d_upper_exp.setValue(bounds["D"][1])
-        self.temperature_lower.setValue(bounds["temperature_C"][0])
-        self.temperature_upper.setValue(bounds["temperature_C"][1])
-        self.fit_concentration_lower.setValue(bounds["concentration_mM"][0])
-        self.fit_concentration_upper.setValue(bounds["concentration_mM"][1])
-        self.fit_sigma0_lower.setValue(bounds["solvent_sigma0_mN_per_m"][0])
-        self.fit_sigma0_upper.setValue(bounds["solvent_sigma0_mN_per_m"][1])
-        self.fit_time_offset_lower.setValue(bounds["time_offset_s"][0])
-        self.fit_time_offset_upper.setValue(bounds["time_offset_s"][1])
-        self.radius_lower.setValue(bounds.get("radius_mm", [0.1, 5.0])[0])
-        self.radius_upper.setValue(bounds.get("radius_mm", [0.1, 5.0])[1])
-        for name, field in self.fit_isotherm_lower.items():
-            key = {"a_mol_per_m3": "a_M", "gamma_inf_mol_per_m2": "gamma_inf_umol_per_m2"}.get(name, name)
-            field.setValue(bounds[key][0])
-            self.fit_isotherm_upper[name].setValue(bounds[key][1])
-        for name, field in self.fit_isotherm_n.items():
-            field.setValue(profile["n_values"].get(name, field.value()))
-        self.fit_temperature_check.setChecked(profile["fit"].get("temperature", False))
-        self.fit_concentration_check.setChecked(profile["fit"].get("concentration", False))
-        self.fit_sigma0_check.setChecked(profile["fit"].get("solvent_sigma0", False))
-        self.fit_time_offset_check.setChecked(profile["fit"].get("time_offset", False))
-        self.fit_radius_check.setChecked(profile.get("fit", {}).get("radius", False))
-        self.radius_n_values.setValue(profile.get("n_values", {}).get("radius", 9))
-        for name, checkbox in self.fit_isotherm_checks.items():
-            checkbox.setChecked(profile["fit"].get(name, False))
-        self._profile_edit_guard = False
-        self._update_fit_parameter_controls()
-
-    def _on_geometry_changed(self, _text: str) -> None:
-        spherical = self._current_geometry_name() == "spherical"
-        self.fit_radius_check.setEnabled(spherical)
-        if not spherical:
-            self.fit_radius_check.setChecked(False)
-        self._update_fit_parameter_controls()
-
-    def _on_profile_edited(self, *_args) -> None:
-        if self._profile_edit_guard:
-            return
-        self._update_permutation_count()
-        current = self.fitting_profile_combo.currentText()
-        if current in BUILTIN_PROFILE_NAMES:
-            custom_name = self._next_custom_profile_name(self._base_solute_name)
-            self.fitting_profiles[custom_name] = self._profile_from_controls()
-            self.parameter_sets = {n: p["values"] for n, p in self.fitting_profiles.items()}
-            self.fitting_profile_combo.blockSignals(True)
-            self.fitting_profile_combo.addItem(custom_name)
-            self.fitting_profile_combo.setCurrentText(custom_name)
-            self.fitting_profile_combo.blockSignals(False)
-        elif current.startswith("Custom ("):
-            self.fitting_profiles[current] = self._profile_from_controls()
-
-    def _next_custom_profile_name(self, base_name: str) -> str:
-        prefix = f"Custom ({base_name})"
-        existing = [name for name in self.fitting_profiles if name.startswith(prefix)]
-        if not existing:
-            return prefix
-        index = 1
-        while f"{prefix}({index})" in existing:
-            index += 1
-        return f"{prefix}({index})"
+            self.solute_combo.setCurrentText(selected)
+        self.solute_combo.blockSignals(False)
 
     def _current_parameter_values(self) -> dict[str, float]:
         return {
-            "a_M": self.fit_isotherm_value["a_mol_per_m3"].value(),
+            "a_M": self.fit_isotherm_value["a_mol_per_m3"].value() / 1000.0,
             "gamma_inf_umol_per_m2": self.fit_isotherm_value[
                 "gamma_inf_mol_per_m2"
             ].value(),
@@ -810,209 +490,139 @@ class MainWindow(QMainWindow):
         }
 
     def _on_solute_changed(self, name: str) -> None:
-        self._on_profile_changed(name)
+        if name not in self.parameter_sets or not hasattr(self, "fit_isotherm_value"):
+            return
+        params = self.parameter_sets[name]
+        self.fit_isotherm_value["a_mol_per_m3"].setValue(params["a_M"] * 1000.0)
+        self.fit_isotherm_value["gamma_inf_mol_per_m2"].setValue(
+            params["gamma_inf_umol_per_m2"]
+        )
+        self.fit_isotherm_value["k"].setValue(params["k"])
+        self.fit_isotherm_value["p"].setValue(params["p"])
 
-    def _profile_from_controls(self) -> dict:
-        values = {
-            "D": self._read_last_used(self.d_last_used, "D"),
-            "temperature_C": self._read_last_used(self.temperature_last_used, "temperature"),
-            "concentration_mM": self._read_last_used(self.concentration_last_used, "concentration"),
-            "solvent_sigma0_mN_per_m": self._read_last_used(self.sigma0_last_used, "solvent sigma0"),
-            "time_offset_s": self._read_last_used(self.time_offset_last_used, "time offset"),
-            "a_M": self.fit_isotherm_value["a_mol_per_m3"].value(),
-            "gamma_inf_umol_per_m2": self.fit_isotherm_value["gamma_inf_mol_per_m2"].value(),
-            "k": self.fit_isotherm_value["k"].value(),
-            "p": self.fit_isotherm_value["p"].value(),
-            "radius_mm": self._read_last_used(self.radius_last_used, "radius"),
-        }
-        bounds = {
-            "D": [self.d_lower_exp.value(), self.d_upper_exp.value()],
-            "temperature_C": [self.temperature_lower.value(), self.temperature_upper.value()],
-            "concentration_mM": [self.fit_concentration_lower.value(), self.fit_concentration_upper.value()],
-            "solvent_sigma0_mN_per_m": [self.fit_sigma0_lower.value(), self.fit_sigma0_upper.value()],
-            "time_offset_s": [self.fit_time_offset_lower.value(), self.fit_time_offset_upper.value()],
-            "radius_mm": [self.radius_lower.value(), self.radius_upper.value()],
-        }
-        n_values = {
-            "D": self.d_n_values.value(),
-            "temperature": self.temperature_n_values.value(),
-            "concentration": self.concentration_n_values.value(),
-            "solvent_sigma0": self.sigma0_n_values.value(),
-            "time_offset": self.time_offset_n_values.value(),
-            "radius": self.radius_n_values.value(),
-        }
-        fit = {
-            "temperature": self.fit_temperature_check.isChecked(),
-            "concentration": self.fit_concentration_check.isChecked(),
-            "solvent_sigma0": self.fit_sigma0_check.isChecked(),
-            "time_offset": self.fit_time_offset_check.isChecked(),
-            "radius": self.fit_radius_check.isChecked(),
-        }
-        for name in self.fit_isotherm_value:
-            key = {"a_mol_per_m3": "a_M", "gamma_inf_mol_per_m2": "gamma_inf_umol_per_m2"}.get(name, name)
-            values[key] = self.fit_isotherm_value[name].value()
-            bounds[key] = [self.fit_isotherm_lower[name].value(), self.fit_isotherm_upper[name].value()]
-            n_values[name] = self.fit_isotherm_n[name].value()
-            fit[name] = self.fit_isotherm_checks[name].isChecked()
-        return {
-            "base_solute": self._base_solute_name,
-            "isotherm_name": self._current_isotherm_name(),
-            "geometry": self._current_geometry_name(),
-            "fit": fit,
-            "bounds": bounds,
-            "n_values": n_values,
-            "values": values,
-        }
+        preset = SURFACTANT_PRESETS.get(name)
+        if preset is not None:
+            self.isotherm_combo.setCurrentText(ISOTHERM_DISPLAY_NAMES["langmuir"])
+            if preset.suggested_bulk_conc_M is not None:
+                self.concentration_last_used.setText(
+                    f"{preset.suggested_bulk_conc_M * 1000.0:.6g}"
+                )
+            if preset.suggested_D_m2_per_s is not None:
+                if hasattr(self, "d_last_used"):
+                    self.d_last_used.setText(f"{preset.suggested_D_m2_per_s:.6g}")
+            if preset.suggested_temperature_C is not None:
+                if hasattr(self, "temperature_last_used"):
+                    self.temperature_last_used.setText(f"{preset.suggested_temperature_C:.6g}")
+            if preset.suggested_sigma0_mN_per_m is not None:
+                if hasattr(self, "sigma0_last_used"):
+                    self.sigma0_last_used.setText(f"{preset.suggested_sigma0_mN_per_m:.6g}")
+            if preset.suggested_bulk_conc_M is not None and hasattr(self, "concentration_last_used"):
+                self.concentration_last_used.setText(f"{preset.suggested_bulk_conc_M * 1000.0:.6g}")
 
     def _on_save_parameters(self) -> None:
-        current = self.fitting_profile_combo.currentText()
-        name = (
-            current
-            if current.startswith("Custom (")
-            else self._next_custom_profile_name(self._base_solute_name)
-        )
-        suggested_path = self.profile_folder / f"{safe_profile_filename(name)}.json"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save fitting profile",
-            str(suggested_path),
-            "JSON profile (*.json)",
-        )
-        if path:
-            selected_path = Path(path)
-            self._save_parameter_set(selected_path.stem.strip() or name, selected_path)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Save parameter set")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Select a saved solute to overwrite, or save as new:"))
+        solute_list = QListWidget()
+        solute_list.addItems(sorted(self.parameter_sets))
+        if solute_list.count():
+            solute_list.setCurrentRow(0)
+        layout.addWidget(solute_list)
 
-    def _on_edit_default_profiles(self) -> None:
-        profiles = builtin_fitting_profiles()
-        selector = QDialog(self)
-        selector.setWindowTitle("Edit default fitting profiles")
-        selector_layout = QVBoxLayout(selector)
-        selector_layout.addWidget(QLabel("Default profile to edit:"))
-        profile_combo = QComboBox()
-        profile_combo.addItems(BUILTIN_PROFILE_NAMES)
-        selector_layout.addWidget(profile_combo)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(selector.accept)
-        buttons.rejected.connect(selector.reject)
-        selector_layout.addWidget(buttons)
-        if selector.exec() != QDialog.DialogCode.Accepted:
-            return
-        name = profile_combo.currentText()
-        editor = DefaultProfileEditorDialog(name, profiles[name], self)
-        if editor.exec() == QDialog.DialogCode.Accepted:
-            self._reload_profiles(name)
+        buttons = QHBoxLayout()
+        save_selected_btn = QPushButton("Save")
+        save_new_btn = QPushButton("Save as new")
+        cancel_btn = QPushButton("Cancel")
+        save_selected_btn.setEnabled(solute_list.count() > 0)
+        buttons.addWidget(save_selected_btn)
+        buttons.addWidget(save_new_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+        save_selected_btn.clicked.connect(dialog.accept)
+        save_new_btn.clicked.connect(lambda: dialog.done(2))
+        cancel_btn.clicked.connect(dialog.reject)
+
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted and solute_list.currentItem():
+            name = solute_list.currentItem().text()
+            answer = QMessageBox.question(
+                self,
+                "Confirm overwrite",
+                f"This will overwrite the existing save for {name}, are you sure?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._save_parameter_set(name)
+        elif result == 2:
+            self._on_save_as_new()
 
     def _on_save_as_new(self) -> None:
-        self._on_save_parameters()
-
-    def _save_parameter_set(self, name: str, path: Path) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Save as new parameter set")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Name:"))
+        name_field = QLineEdit()
+        layout.addWidget(name_field)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        buttons.addWidget(save_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+        save_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name = name_field.text().strip()
         if not name:
-            QMessageBox.warning(self, "Name required", "Enter a name for the fitting profile.")
+            QMessageBox.warning(self, "Name required", "Enter a name for the parameter set.")
             return
-        if name in BUILTIN_PROFILE_NAMES:
-            QMessageBox.warning(self, "Built-in profile", "Built-in profiles cannot be overwritten.")
-            return
-        if name in self.fitting_profiles and name != self.fitting_profile_combo.currentText():
-            QMessageBox.warning(self, "Name already saved", f"'{name}' already exists.")
-            return
-        if path.parent.resolve() != self.profile_folder.resolve():
+        if name in self.parameter_sets:
             QMessageBox.warning(
-                self,
-                "Invalid profile location",
-                f"Custom profiles must be saved in {self.profile_folder}.",
+                self, "Name already saved", f"'{name}' already exists. Select it to overwrite."
             )
             return
+        self._save_parameter_set(name)
+
+    def _save_parameter_set(self, name: str) -> None:
         try:
-            profile = self._profile_from_controls()
-            save_custom_fitting_profile(path, name, profile)
+            self.parameter_sets = save_parameter_set(
+                name, self._current_parameter_values()
+            )
         except ParameterConfigError as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
             return
-        self._reload_profiles(name)
-
-    def _rename_profile(self) -> None:
-        current = self.fitting_profile_combo.currentText()
-        if not current or current in BUILTIN_PROFILE_NAMES:
-            QMessageBox.warning(self, "Built-in profile", "Built-in profiles cannot be renamed.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Rename fitting profile",
-            str(self.profile_folder / f"{safe_profile_filename(current)}.json"),
-            "JSON profile (*.json)",
-        )
-        if not path:
-            return
-        if Path(path).parent.resolve() != self.profile_folder.resolve():
-            QMessageBox.warning(
-                self,
-                "Invalid profile location",
-                f"Custom profiles must be saved in {self.profile_folder}.",
-            )
-            return
-        name = Path(path).stem.strip()
-        if not name or name in self.fitting_profiles:
-            QMessageBox.warning(self, "Name unavailable", "Choose a new, unused profile name.")
-            return
-        try:
-            save_custom_fitting_profile(Path(path), name, self.fitting_profiles[current])
-            old_path = self.profile_folder / f"{safe_profile_filename(current)}.json"
-            if old_path != Path(path) and old_path.exists():
-                old_path.unlink()
-        except (OSError, ParameterConfigError) as exc:
-            QMessageBox.critical(self, "Rename failed", str(exc))
-            return
-        self._reload_profiles(name)
-
-    def _delete_custom_profiles(self) -> None:
-        answer = QMessageBox.question(
-            self, "Delete custom profiles",
-            "Delete all custom fitting profiles? Built-in profiles will remain.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        for path in self.profile_folder.glob("*.json"):
-            try:
-                path.unlink()
-            except OSError as exc:
-                QMessageBox.critical(self, "Delete failed", str(exc))
-                return
-        self._reload_profiles(DEFAULT_PROFILE_NAME)
-
-    def _reload_profiles(self, selected: Optional[str] = None) -> None:
-        current = selected or self.fitting_profile_combo.currentText()
-        self.fitting_profiles = builtin_fitting_profiles()
-        self.fitting_profiles.update(load_custom_fitting_profiles(self.profile_folder))
-        self.parameter_sets = {n: p["values"] for n, p in self.fitting_profiles.items()}
-        self._refresh_solute_choices(
-            current if current in self.fitting_profiles else DEFAULT_PROFILE_NAME
-        )
+        self._refresh_solute_choices(name)
 
     def _on_restore_defaults(self) -> None:
-        custom_profiles = sorted(set(self.fitting_profiles) - set(BUILTIN_PROFILE_NAMES))
-        lost_profiles = ", ".join(custom_profiles) if custom_profiles else "none"
+        try:
+            default_sets = load_parameter_sets(DEFAULT_CONFIG_PATH)
+        except ParameterConfigError as exc:
+            QMessageBox.critical(self, "Restore failed", str(exc))
+            return
+        missing_solutes = sorted(set(self.parameter_sets) - set(default_sets))
+        lost_solutes = ", ".join(missing_solutes) if missing_solutes else "none"
         answer = QMessageBox.question(
             self,
             "Restore defaults",
-            "This will delete all custom profile files and result in the loss of "
-            f"{lost_profiles}. Consolidate any profiles that you wish to retain "
+            "This will overwrite all current saved parameters in the live config file, "
+            "and will result in the loss of "
+            f"{lost_solutes}. Consolidate any parameter sets that you wish to retain "
             "in the default configuration.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Ok:
             return
-        for path in self.profile_folder.glob("*.json"):
-            try:
-                path.unlink()
-            except OSError as exc:
-                QMessageBox.critical(self, "Restore failed", str(exc))
-                return
-        self._reload_profiles(DEFAULT_PROFILE_NAME)
+        try:
+            self.parameter_sets = restore_default_config()
+        except ParameterConfigError as exc:
+            QMessageBox.critical(self, "Restore failed", str(exc))
+            return
+        self._refresh_solute_choices(next(iter(self.parameter_sets), "Custom"))
+        self._on_solute_changed(self.solute_combo.currentText())
 
     def _build_conditions_group(self) -> QGroupBox:
         box = QGroupBox("3. Conditions and optional fit parameters")
@@ -1121,7 +731,6 @@ class MainWindow(QMainWindow):
             (self.fit_concentration_check, self.fit_concentration_lower, self.fit_concentration_upper, self.concentration_n_values, self.concentration_last_used),
             (self.fit_sigma0_check, self.fit_sigma0_lower, self.fit_sigma0_upper, self.sigma0_n_values, self.sigma0_last_used),
             (self.fit_time_offset_check, self.fit_time_offset_lower, self.fit_time_offset_upper, self.time_offset_n_values, self.time_offset_last_used),
-            (self.fit_radius_check, self.radius_lower, self.radius_upper, self.radius_n_values, self.radius_last_used),
         )
         for checkbox, lower, upper, n_values, last_used in controls:
             enabled = checkbox.isChecked()
@@ -1138,54 +747,9 @@ class MainWindow(QMainWindow):
             self.fit_isotherm_value[name].setReadOnly(enabled)
             self.fit_isotherm_value[name].setEnabled(True)
         self.d_n_values.setEnabled(True)
-        spherical = self._current_geometry_name() == "spherical"
-        self.fit_radius_check.setEnabled(spherical)
-        if not spherical:
-            self.radius_lower.setEnabled(False)
-            self.radius_upper.setEnabled(False)
-            self.radius_n_values.setEnabled(False)
-            self.radius_last_used.setReadOnly(False)
-        self._update_permutation_count()
-
-    def _update_permutation_count(self) -> None:
-        if not hasattr(self, "permutation_count_label"):
-            return
-        optional_counts = [
-            self.temperature_n_values.value()
-            for checkbox in (self.fit_temperature_check,)
-            if checkbox.isChecked()
-        ]
-        optional_counts += [
-            self.concentration_n_values.value()
-            for checkbox in (self.fit_concentration_check,)
-            if checkbox.isChecked()
-        ]
-        optional_counts += [
-            self.sigma0_n_values.value()
-            for checkbox in (self.fit_sigma0_check,)
-            if checkbox.isChecked()
-        ]
-        optional_counts += [
-            self.time_offset_n_values.value()
-            for checkbox in (self.fit_time_offset_check,)
-            if checkbox.isChecked()
-        ]
-        if self._current_geometry_name() == "spherical" and self.fit_radius_check.isChecked():
-            optional_counts.append(self.radius_n_values.value())
-        optional_counts += [
-            self.fit_isotherm_n[name].value()
-            for name, checkbox in self.fit_isotherm_checks.items()
-            if checkbox.isChecked()
-        ]
-        outer_permutations = 1 + sum(3 * count + 2 for count in optional_counts)
-        d_evaluations = outer_permutations * self.d_n_values.value()
-        self.permutation_count_label.setText(
-            f"Fit permutations: {outer_permutations} "
-            f"(D evaluations: {d_evaluations})"
-        )
 
     def _build_actions_group(self) -> QGroupBox:
-        box = QGroupBox("3. Run & export")
+        box = QGroupBox("4. Run & export")
         layout = QVBoxLayout(box)
 
         plot_form = QFormLayout()
@@ -1194,16 +758,19 @@ class MainWindow(QMainWindow):
         self.experimental_legend_value = QLineEdit("Experimental")
         self.model_legend_value = QLineEdit("Ward-Tordai")
         plot_form.addRow("Plot title:", self.plot_title_value)
-        plot_form.addRow("Experimental points:", self.experimental_legend_value)
-        plot_form.addRow("Ward-Tordai line:", self.model_legend_value)
+        plot_form.addRow("Legend text for experimental data:", self.experimental_legend_value)
+        plot_form.addRow("Legend text for Ward-Tordai fit:", self.model_legend_value)
         layout.addLayout(plot_form)
         self.plot_title_value.textChanged.connect(self._on_plot_labels_changed)
         self.experimental_legend_value.textChanged.connect(self._on_plot_labels_changed)
         self.model_legend_value.textChanged.connect(self._on_plot_labels_changed)
 
         run_row = QHBoxLayout()
+        simulate_btn = QPushButton("Simulate")
+        simulate_btn.clicked.connect(self._on_simulate)
         fit_btn = QPushButton("Fit D / selected parameters")
         fit_btn.clicked.connect(self._on_fit)
+        run_row.addWidget(simulate_btn)
         run_row.addWidget(fit_btn)
         layout.addLayout(run_row)
         self.fit_progress = QProgressBar()
@@ -1219,7 +786,7 @@ class MainWindow(QMainWindow):
         export_png_btn.clicked.connect(self._on_export_png)
         self.simulation_point_count = QSpinBox()
         self.simulation_point_count.setRange(2, 100000)
-        self.simulation_point_count.setValue(1000)
+        self.simulation_point_count.setValue(100)
         export_row.addWidget(QLabel("Simulation points:"))
         export_row.addWidget(self.simulation_point_count)
         export_row.addWidget(export_summary_btn)
@@ -1248,16 +815,9 @@ class MainWindow(QMainWindow):
     def _current_isotherm_name(self) -> str:
         return {v: k for k, v in ISOTHERM_DISPLAY_NAMES.items()}[self.isotherm_combo.currentText()]
 
-    def _current_geometry_name(self) -> str:
-        return (
-            "spherical"
-            if self.geometry_combo.currentText() == "Spherical (fixed radius)"
-            else "planar"
-        )
-
     def _build_isotherm_params(self) -> dict:
         name = self._current_isotherm_name()
-        a_mol_per_m3 = self.fit_isotherm_value["a_mol_per_m3"].value() * 1000.0
+        a_mol_per_m3 = self.fit_isotherm_value["a_mol_per_m3"].value()
         gamma_inf_mol_per_m2 = self.fit_isotherm_value["gamma_inf_mol_per_m2"].value() * 1e-6
         if name == "henry":
             return {"a_mol_per_m3": a_mol_per_m3, "gamma_inf_mol_per_m2": gamma_inf_mol_per_m2}
@@ -1293,20 +853,15 @@ class MainWindow(QMainWindow):
                 TensionUnit.MILLINEWTON_PER_METER,
             ),
             diffusion_coefficient_m2_per_s=self._read_last_used(self.d_last_used, "D"),
-            geometry=self._current_geometry_name(),
-            radius_m=self._read_last_used(self.radius_last_used, "radius") / 1000.0,
         )
 
     def _on_load_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Load CSV", "", "CSV files (*.csv)")
         if not path:
             return
-        self._load_csv_path(Path(path))
-
-    def _load_csv_path(self, path: Path) -> None:
         try:
             self.data = load_csv(
-                str(path),
+                path,
                 time_unit=TimeUnit(self.time_unit_combo.currentText()),
                 tension_unit=TensionUnit(self.tension_unit_combo.currentText()),
             )
@@ -1315,26 +870,6 @@ class MainWindow(QMainWindow):
             return
         self.data_status_label.setText(f"Loaded {len(self.data)} points from {path}")
         self._redraw_plot()
-
-    def _on_use_example_data(self) -> None:
-        candidates = (
-            Path.cwd() / "experimental_data.csv",
-            Path.cwd() / "examples" / "sample_data.csv",
-            Path(__file__).resolve().parents[2] / "experimental_data.csv",
-        )
-        example_path = next((path for path in candidates if path.is_file()), None)
-        if example_path is None:
-            QMessageBox.warning(
-                self,
-                "Example data unavailable",
-                "Could not find experimental_data.csv or examples/sample_data.csv.",
-            )
-            return
-        self.time_unit_combo.setCurrentText(TimeUnit.SECONDS.value)
-        self.tension_unit_combo.setCurrentText(TensionUnit.MILLINEWTON_PER_METER.value)
-        self._load_csv_path(example_path)
-        if DEFAULT_PROFILE_NAME in self.fitting_profiles:
-            self.fitting_profile_combo.setCurrentText(DEFAULT_PROFILE_NAME)
 
     def _on_use_pasted(self) -> None:
         text = self.paste_edit.toPlainText()
@@ -1359,23 +894,13 @@ class MainWindow(QMainWindow):
             return None
         return self.data
 
-    def _simulation_grid_data(self, data: ExperimentalData) -> ExperimentalData:
-        count = self.simulation_point_count.value()
-        minimum_time = float(np.min(data.time_s))
-        maximum_time = float(np.max(data.time_s))
-        if minimum_time == maximum_time:
-            times = np.full(count, minimum_time, dtype=float)
-        else:
-            times = np.geomspace(minimum_time, maximum_time, count)
-        return ExperimentalData(times, np.zeros(count, dtype=float))
-
     def _on_simulate(self) -> None:
         data = self._require_data()
         if data is None:
             return
         try:
             settings = self._build_settings()
-            result = simulate(settings, self._simulation_grid_data(data))
+            result = simulate(settings, data)
         except (IsothermError, ValueError) as exc:
             QMessageBox.critical(self, "Simulation failed", str(exc))
             return
@@ -1465,15 +990,6 @@ class MainWindow(QMainWindow):
                     self.fit_time_offset_upper.value(),
                 ),
                 initial_time_offset_s=fixed_time_offset,
-                fit_radius=(
-                    self._current_geometry_name() == "spherical"
-                    and self.fit_radius_check.isChecked()
-                ),
-                radius_bounds_m=(
-                    self.radius_lower.value() / 1000.0,
-                    self.radius_upper.value() / 1000.0,
-                ),
-                initial_radius_m=self._read_last_used(self.radius_last_used, "radius") / 1000.0,
                 fit_isotherm_params=isotherm_bounds,
                 d_n_values=self.d_n_values.value(),
                 n_values={
@@ -1482,7 +998,6 @@ class MainWindow(QMainWindow):
                     "temperature_K": self.temperature_n_values.value(),
                     "time_offset_s": self.time_offset_n_values.value(),
                     **isotherm_counts,
-                    "radius_m": self.radius_n_values.value(),
                 },
                 progress_callback=self._update_fit_progress,
                 log10_D_bounds=bounds,
@@ -1492,34 +1007,24 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fit failed", str(exc))
             return
         self.last_fit = fit_result
-        display_simulation = fit_result.simulation
-        if fit_result.success:
-            display_settings = fit_result.optimized_settings or settings
-            display_simulation = simulate(
-                display_settings, self._simulation_grid_data(data)
-            )
-        self._last_simulation = display_simulation
-        self._redraw_plot(display_simulation)
+        self._last_simulation = fit_result.simulation
+        self._redraw_plot(fit_result.simulation)
         if fit_result.success:
             # Reflect the fitted D back into the input field so the user
             # can see/reuse it, and immediately re-simulate with it so the
             # displayed "D used" matches the field.
             fitted = fit_result.fitted_parameters
-            self.d_last_used.setText(f"{fit_result.fitted_D_m2_per_s:.4g}")
+            self.d_last_used.setText(f"{fit_result.fitted_D_m2_per_s:.6g}")
             self.temperature_last_used.setText(
-                f"{fitted['temperature_K'] - 273.15:.4g}"
+                f"{fitted['temperature_K'] - 273.15:.6g}"
             )
             self.concentration_last_used.setText(
-                f"{fitted['bulk_concentration_mol_per_m3']:.4g}"
+                f"{fitted['bulk_concentration_mol_per_m3']:.6g}"
             )
-            if "radius_m" in fitted:
-                self.radius_last_used.setText(f"{fitted['radius_m'] * 1000.0:.4g}")
             self.sigma0_last_used.setText(
-                f"{fitted['solvent_sigma0_N_per_m'] * 1000.0:.4g}"
+                f"{fitted['solvent_sigma0_N_per_m'] * 1000.0:.6g}"
             )
-            self.time_offset_last_used.setText(
-                "0.0" if fitted["time_offset_s"] == 0 else f"{fitted['time_offset_s']:.4g}"
-            )
+            self.time_offset_last_used.setText(f"{fitted['time_offset_s']:.6g}")
             for name in self.fit_isotherm_checks:
                 if name not in fitted:
                     continue
@@ -1578,12 +1083,6 @@ class MainWindow(QMainWindow):
                 lines.append(f"Fitted solvent sigma0: {value * 1000:.4g} mN/m")
             elif name == "temperature_K":
                 lines.append(f"Fitted temperature: {value - 273.15:.4g} degC")
-            elif name == "a_mol_per_m3":
-                lines.append(f"Fitted a: {value / 1000.0:.4g} M")
-            elif name == "gamma_inf_mol_per_m2":
-                lines.append(f"Fitted Gamma_inf: {value * 1e6:.4g} umol/m^2")
-            elif name in ("k", "p"):
-                lines.append(f"Fitted {name}: {value:.4g}")
         if fit_result.parameter_profile_rmse_span_N_per_m:
             lines.append("Profile RMSE change near optimum:")
             for name, span in fit_result.parameter_profile_rmse_span_N_per_m.items():
