@@ -41,13 +41,16 @@ script creates `.venv` if needed, installs the PyInstaller build dependency,
 and packages the application:
 
 - Windows creates `dist\WardTordai.exe`.
-- macOS creates `dist/WardTordai.app`.
+- macOS creates `dist/WardTordai.app`; the GitHub packaging workflow wraps
+  this bundle as `WardTordai-macos.zip`, which is the portable file to send
+  to Mac users.
 
 PyInstaller does not cross-compile Windows and macOS applications. To build
 both packages while working on Windows, push the branch to GitHub and run
 the **Package desktop applications** workflow from the Actions tab. It uses
 native Windows and macOS runners and publishes `WardTordai-windows` and
-`WardTordai-macos` artifacts. Alternatively, run
+`WardTordai-macos` artifacts. The macOS artifact contains `WardTordai-macos.zip`; download that
+file and send it as-is. Alternatively, run
 `.\package-all.ps1` from PowerShell (with the GitHub CLI installed and
 authenticated) to dispatch that workflow for the current branch. The built
 applications include their Python dependencies and bundled default-profile

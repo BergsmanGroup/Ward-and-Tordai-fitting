@@ -1,0 +1,53 @@
+{
+  "name": "HTAB (Planar)",
+  "base_solute": "HTAB",
+  "isotherm_name": "langmuir",
+  "geometry": "planar",
+  "fit": {
+    "temperature": false,
+    "concentration": false,
+    "solvent_sigma0": false,
+    "time_offset": false,
+    "a_mol_per_m3": false,
+    "gamma_inf_mol_per_m2": false,
+    "k": false,
+    "p": false,
+    "radius": false
+  },
+  "bounds": {
+    "D": [-13.0, -7.0],
+    "temperature_C": [20.0, 26.0],
+    "concentration_mM": [0.2, 2.0],
+    "solvent_sigma0_mN_per_m": [70.0, 75.0],
+    "time_offset_s": [-2.0, 2.0],
+    "a_M": [1e-6, 1e-3],
+    "gamma_inf_umol_per_m2": [1.0, 10.0],
+    "k": [-100.0, 100.0],
+    "p": [1e-6, 100.0],
+    "radius_mm": [0.1, 10.0]
+  },
+  "n_values": {
+    "D": 25,
+    "temperature": 9,
+    "concentration": 9,
+    "solvent_sigma0": 9,
+    "time_offset": 9,
+    "a_mol_per_m3": 9,
+    "gamma_inf_mol_per_m2": 9,
+    "k": 9,
+    "p": 9,
+    "radius": 9
+  },
+  "values": {
+    "D": 1e-9,
+    "temperature_C": 23.0,
+    "concentration_mM": 1.0,
+    "solvent_sigma0_mN_per_m": 72.5,
+    "time_offset_s": 0.0,
+    "a_M": 3.70e-4,
+    "gamma_inf_umol_per_m2": 8.0,
+    "k": 0.0,
+    "p": 1.0,
+    "radius_mm": 1.0
+  }
+}

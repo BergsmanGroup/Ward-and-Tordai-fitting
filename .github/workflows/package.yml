@@ -18,7 +18,7 @@ jobs:
           - name: macOS
             os: macos-latest
             artifact: WardTordai-macos
-            file: dist/WardTordai.app
+            file: dist/WardTordai-macos.zip
 
     steps:
       - name: Check out source
@@ -31,6 +31,12 @@ jobs:
 
       - name: Build package
         run: python package.py
+
+      - name: Create portable macOS ZIP
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/WardTordai.app dist/WardTordai-macos.zip
 
       - name: Upload application
         uses: actions/upload-artifact@v4

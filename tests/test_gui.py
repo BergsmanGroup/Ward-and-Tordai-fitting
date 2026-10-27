@@ -64,7 +64,7 @@ def test_main_window_contains_export_and_plot_controls_without_preset_popup(qapp
     )
     window = MainWindow()
 
-    window._on_solute_changed("Triton X-100")
+    window._on_solute_changed("Triton X-100 (Planar)")
 
     assert window.simulation_point_count.value() == 1000
     assert window.plot_title_value.placeholderText() == "Optional plot title"

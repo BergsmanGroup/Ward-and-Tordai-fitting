@@ -27,7 +27,15 @@ DEFAULT_PROFILES_DIRECTORY = bundle_directory / "config" / "default_profiles"
 
 LIVE_CONFIG_PATH = CONFIG_DIRECTORY / "surfactant_parameters.json"
 PARAMETER_KEYS = ("a_M", "gamma_inf_umol_per_m2", "k", "p")
-BUILTIN_PROFILE_NAMES = ("Triton X-100", "HTAB", "Octanol")
+DEFAULT_PROFILE_NAME = "Triton X-100 (Planar)"
+BUILTIN_PROFILE_NAMES = (
+    "HTAB (Planar)",
+    "HTAB (Spherical)",
+    "Octanol (Planar)",
+    "Octanol (Spherical)",
+    "Triton X-100 (Planar)",
+    "Triton X-100 (Spherical)",
+)
 CUSTOM_PROFILE_FOLDER_NAME = "custom_profiles"
 BUILTIN_SOLUTE_PARAMETERS = {
     "Triton X-100": {
@@ -264,6 +272,20 @@ def load_default_fitting_profiles() -> dict[str, dict]:
 
 def builtin_fitting_profiles() -> dict[str, dict]:
     return load_default_fitting_profiles()
+
+
+def save_default_fitting_profile(name: str, profile: Mapping) -> dict:
+    """Overwrite one bundled default profile after explicit GUI confirmation."""
+    if name not in BUILTIN_PROFILE_NAMES:
+        raise ParameterConfigError(f"Unknown default fitting profile '{name}'")
+    path = default_profile_directory() / f"{safe_profile_filename(name)}.json"
+    document = dict(profile)
+    document["name"] = name
+    try:
+        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    except (OSError, TypeError, ValueError) as exc:
+        raise ParameterConfigError(f"Could not save default fitting profile '{path}': {exc}") from exc
+    return document
 
 
 def load_custom_fitting_profiles(directory: Path | None = None) -> dict[str, dict]:

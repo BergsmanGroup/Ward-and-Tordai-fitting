@@ -58,3 +58,4 @@ if ([string]::IsNullOrWhiteSpace($runId)) {
 Write-Host "Workflow started with run ID $runId. Wait for it to finish, then copy and paste:"
 Write-Host "  gh run download $runId -n WardTordai-windows -D .\dist"
 Write-Host "  gh run download $runId -n WardTordai-macos -D .\dist"
+Write-Host "The macOS download contains WardTordai-macos.zip, ready to send to Mac users."
