@@ -1,11 +1,18 @@
 import json
 
 from ward_tordai.config import (
+    builtin_fitting_profiles,
     ensure_live_config,
     load_parameter_sets,
     restore_default_config,
     save_parameter_set,
 )
+
+
+def test_builtin_fitting_profiles_are_available():
+    profiles = builtin_fitting_profiles()
+
+    assert set(profiles) == {"Triton X-100", "HTAB", "Octanol"}
 
 
 def test_live_config_is_initialized_as_exact_default_copy(tmp_path):

@@ -19,13 +19,11 @@ if getattr(sys, "frozen", False):
     CONFIG_DIRECTORY = app_data_directory / "Ward and Tordai Fitting"
     DEFAULT_CONFIG_PATH = bundle_directory / "config" / "surfactant_parameters.default.json"
 else:
+    bundle_directory = Path(__file__).resolve().parents[2]
     CONFIG_DIRECTORY = Path(__file__).resolve().parents[2] / "config"
     DEFAULT_CONFIG_PATH = CONFIG_DIRECTORY / "surfactant_parameters.default.json"
-    DEFAULT_PROFILES_DIRECTORY = (
-        bundle_directory / "config" / "default_profiles"
-        if getattr(sys, "frozen", False)
-        else CONFIG_DIRECTORY / "default_profiles"
-    )
+
+DEFAULT_PROFILES_DIRECTORY = bundle_directory / "config" / "default_profiles"
 
 LIVE_CONFIG_PATH = CONFIG_DIRECTORY / "surfactant_parameters.json"
 PARAMETER_KEYS = ("a_M", "gamma_inf_umol_per_m2", "k", "p")
