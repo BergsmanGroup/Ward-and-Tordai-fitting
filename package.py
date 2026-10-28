@@ -71,6 +71,13 @@ def main() -> int:
         "src",
         "--add-data",
         data_argument,
+        "--add-data",
+        (
+            f"config{os.sep}surfactant_parameters.default.json"
+            f"{data_separator}config"
+        ),
+        "--add-data",
+        f"experimental_data.csv{data_separator}.",
     ]
 
     if system == "Windows":

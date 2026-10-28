@@ -1,0 +1,28 @@
+{
+  "solutes": {
+    "Triton X-100": {
+      "a_M": 6.62e-06,
+      "gamma_inf_umol_per_m2": 2.91,
+      "k": 0.0,
+      "p": 1.0
+    },
+    "HTAB": {
+      "a_M": 0.00037,
+      "gamma_inf_umol_per_m2": 8.0,
+      "k": 0.0,
+      "p": 1.0
+    },
+    "Octanol": {
+      "a_M": 0.000557,
+      "gamma_inf_umol_per_m2": 8.95,
+      "k": 0.0,
+      "p": 1.0
+    },
+    "Test (unknown surfactant)": {
+      "a_M": 6.62e-06,
+      "gamma_inf_umol_per_m2": 2.91,
+      "k": 0.0,
+      "p": 1.0
+    }
+  }
+}
